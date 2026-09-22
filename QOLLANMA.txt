@@ -44,9 +44,12 @@ ISHGA TUSHIRISH
 
 SOLISHTIRISH IZOHI
 -----------------
-- CSV va etalon sarlavhasidagi sanalarni tekshiring; turli kunlar ham solishtiriladi.
-- 0 kunlik yozuvlar etalondagi 1-30 kun ustuniga qo'shilmaydi, lekin База va Сводda qoladi.
-- Oxirgi 2 maxsus toifa joriy CSVda alohida belgilanmagan; Давомиликda ular "—" bilan ko'rsatiladi.
+- CSV va etalon sanalarini tekshiring; turli kunlar ham solishtiriladi.
+- Yangi etalon shakli: Райгаз | 31-35 ... 71+ | Жами. Eski ХГТ булими shakli ham qabul qilinadi.
+- Солиштириш varag'ida etalon, dastur va farq jadvallari bir xil hududlar bo'yicha ko'rsatiladi.
+- 0-30 kunlik yozuvlar Давомилик jadvaliga kiritilmaydi, lekin База va Сводda qoladi.
+- Eski etalondagi 1-30 ustunini solishtirishda 0 kunlik yozuvlar qo'shilmaydi.
+- CSVda alohida belgilanmagan maxsus toifalar hisoblanmaydi.
 
 TALAB
 -----

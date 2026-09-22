@@ -11,6 +11,7 @@ from xml.etree import ElementTree as ET
 NS = {"x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
 BUCKETS = ("1-30", "31-35", "36-40", "41-45", "46-50", "51-55",
            "56-60", "61-65", "66-70", "71+")
+DISPLAY_BUCKETS = BUCKETS[1:]
 
 
 def _column_number(address: str) -> int:
@@ -76,11 +77,13 @@ def parse_reference_xlsx(data: bytes, normalize_name) -> dict:
                 values[_column_number(address)] = _text(cell, strings)
         rows[int(row.get("r"))] = values
 
-    header_row = next((number for number, row in rows.items()
-                       if "хгт" in normalize_name(row.get(1, ""))
-                       and "булими" in normalize_name(row.get(1, ""))), None)
+    header_row = next((number for number, row in sorted(rows.items())
+                       if normalize_name(row.get(1, "")) == "райгаз"
+                       or ("хгт" in normalize_name(row.get(1, ""))
+                           and any(word in normalize_name(row.get(1, ""))
+                                   for word in ("булими", "бўлими")))), None)
     if header_row is None:
-        raise ValueError("Solishtirish faylida 'ХГТ булими' sarlavhasi topilmadi.")
+        raise ValueError("Solishtirish faylida 'Райгаз' yoki 'ХГТ булими' sarlavhasi topilmadi.")
     header = rows[header_row]
     columns = {}
     for column, value in header.items():
@@ -89,9 +92,12 @@ def parse_reference_xlsx(data: bytes, normalize_name) -> dict:
             if bucket in columns:
                 raise ValueError(f"Solishtirish faylida {bucket} ustuni takrorlangan.")
             columns[bucket] = column
-    missing = [bucket for bucket in BUCKETS if bucket not in columns]
+    missing = [bucket for bucket in DISPLAY_BUCKETS if bucket not in columns]
     if missing:
         raise ValueError("Solishtirish faylida oraliq ustunlar yetishmaydi: " + ", ".join(missing))
+    buckets = tuple(bucket for bucket in BUCKETS if bucket in columns)
+    total_column = next((column for column, value in header.items()
+                         if normalize_name(value) in ("жами", "итого", "total")), None)
 
     districts = {}
     names = {}
@@ -118,18 +124,26 @@ def parse_reference_xlsx(data: bytes, normalize_name) -> dict:
             if amount < 0:
                 raise ValueError(f"Solishtirish fayli {number}-qator, {bucket}: manfiy son mumkin emas.")
             counts[bucket] = amount
+        if total_column is not None:
+            raw_total = str(row.get(total_column, "")).replace(" ", "").strip()
+            if not raw_total.isdigit() or int(raw_total) != sum(counts.values()):
+                raise ValueError(f"Solishtirish fayli {number}-qator: Жами ustuni oraliqlar yig'indisiga teng emas.")
         districts[key] = counts
         names[key] = name
     if not districts:
         raise ValueError("Solishtirish faylida hudud ma'lumotlari yo'q.")
 
-    totals = Counter({bucket: sum(row[bucket] for row in districts.values()) for bucket in BUCKETS})
+    totals = Counter({bucket: sum(row[bucket] for row in districts.values()) for bucket in buckets})
     if total_row:
         for bucket, column in columns.items():
             cached = str(total_row.get(column, "")).strip()
             if cached and cached.isdigit() and int(cached) != totals[bucket]:
                 raise ValueError(f"Solishtirish faylida {bucket} jami hududlar yig'indisiga teng emas.")
+        if total_column is not None:
+            cached = str(total_row.get(total_column, "")).replace(" ", "").strip()
+            if not cached.isdigit() or int(cached) != sum(totals.values()):
+                raise ValueError("Solishtirish faylida umumiy Жами hududlar yig'indisiga teng emas.")
 
-    title = rows.get(1, {}).get(9, "").strip()
+    title = rows.get(1, {}).get(9, "").strip() if header_row > 1 else ""
     return {"title": title, "districts": districts, "names": names,
-            "totals": totals}
+            "totals": totals, "buckets": buckets}

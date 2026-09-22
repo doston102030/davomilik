@@ -28,7 +28,7 @@ from typing import Dict, List, Tuple
 from flask import Flask, jsonify, render_template_string, request, send_file
 from werkzeug.exceptions import HTTPException
 import xlsxwriter
-from reference import BUCKETS, parse_reference_xlsx
+from reference import BUCKETS, DISPLAY_BUCKETS, parse_reference_xlsx
 
 APP_NAME = "SVOD TIZIMI"
 APP_VERSION = "1.1"
@@ -145,7 +145,7 @@ button{border:0;border-radius:10px;padding:13px 20px;font-size:16px;font-weight:
 
     <div class="reference">
       <label for="referenceInput">Tayyor davomat jadvali bilan solishtirish (ixtiyoriy)</label>
-      <div class="muted">.xlsx faylni tanlang. Dastur hududlar va kun oraliqlari bo‘yicha farqlarni alohida varaqda ko‘rsatadi.</div>
+      <div class="muted">.xlsx faylni tanlang. “Райгаз | 31-35 ... 71+ | Жами” jadvali ham qabul qilinadi; hududlar va oraliqlar bo‘yicha solishtirish alohida varaqda chiqadi.</div>
       <input id="referenceInput" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
     </div>
 
@@ -269,7 +269,7 @@ go.onclick=async()=>{
     const mismatch=res.headers.get('X-Mismatch-Count');
     status.className='status ok';
     status.textContent='Tayyor. Excel fayl yaratildi va yuklandi.'+
-      (mismatch!==null?' Solishtirish varag‘ida '+mismatch+' ta qator farq qildi.':'');
+      (mismatch!==null?' Solishtirish varag‘ida '+mismatch+' ta farq aniqlandi.':'');
     kpis.innerHTML=`
       <div class="kpi"><span>Jami yozuv</span><b>${total}</b></div>
       <div class="kpi"><span>Raygaz</span><b>${ray}</b></div>
@@ -530,8 +530,8 @@ def build_xlsx(all_rows: List[dict], file_stats: List[dict], warnings: List[str]
         raygaz_counts[r["Райгаз"]][r["Оралиқ"]] += 1
         mahalla_counts[(r["Райгаз"], r["Маҳалла"])][r["Оралиқ"]] += 1
 
-    # The supplied district summary starts at day 1; day 0 remains visible in
-    # the existing control group, but must not be silently counted as 1-30.
+    # New summaries start at day 31. Old references may include 1-30;
+    # day 0 stays in the control group and is never counted as 1-30.
     detailed_counts = defaultdict(Counter)
     detailed_names = {}
     zero_day_count = 0
@@ -653,98 +653,136 @@ def build_xlsx(all_rows: List[dict], file_stats: List[dict], warnings: List[str]
     chart.set_size({"width": 720, "height": 360})
     ws.insert_chart("E4", chart)
 
-    # The district matrix follows the uploaded 22 September layout. The two
-    # special categories cannot be derived from the required CSV columns.
+    # One row per district, in the same 31-35 ... 71+ layout as the supplied screenshot.
     ws = wb.add_worksheet("Давомилик")
     ws.set_tab_color("#00A6A6")
-    ws.merge_range("A1:M1", f"{snapshot_date.strftime('%d.%m.%Y')} ДАВОМИЛИК — ХГТ БЎЛИМЛАРИ", fmt_title)
-    ws.set_row(0, 32)
-    detailed_headers = ["ХГТ бўлими"] + ["1-30 кун"] + [f"{bucket} кун" for bucket in BUCKETS[1:-1]] + [
-        "70 кундан ошган", "Умуман газ олмаганлар", "Муддатида алмаштиришга эҳтиёжи мавжуд эмас"]
-    ws.write_row(1, 0, detailed_headers, fmt_header)
-    ws.set_row(1, 46)
-    for row_index, key in enumerate(detailed_keys, start=2):
+    detailed_headers = ["Райгаз", *DISPLAY_BUCKETS, "Жами"]
+    ws.write_row(0, 0, detailed_headers, fmt_header)
+    ws.set_row(0, 26)
+    for row_index, key in enumerate(detailed_keys, start=1):
         name = reference["names"].get(key, detailed_names.get(key, key)) if reference else detailed_names[key]
         ws.write(row_index, 0, name, fmt_cell)
-        for column, bucket in enumerate(BUCKETS, start=1):
+        for column, bucket in enumerate(DISPLAY_BUCKETS, start=1):
             ws.write_number(row_index, column, detailed_counts[key][bucket], fmt_int)
-        ws.write(row_index, 11, "—", fmt_unknown)
-        ws.write(row_index, 12, "—", fmt_unknown)
-    total_row = len(detailed_keys) + 2
-    ws.write(total_row, 0, "Жами", fmt_total)
-    for column, bucket in enumerate(BUCKETS, start=1):
+        ws.write_formula(row_index, 10, f"=SUM(B{row_index + 1}:J{row_index + 1})",
+                         fmt_int, sum(detailed_counts[key][bucket] for bucket in DISPLAY_BUCKETS))
+    total_row = len(detailed_keys) + 1
+    ws.write(total_row, 0, "ЖАМИ", fmt_total)
+    for column, bucket in enumerate(DISPLAY_BUCKETS, start=1):
         excel_col = xlsxwriter.utility.xl_col_to_name(column)
         cached = sum(detailed_counts[key][bucket] for key in detailed_keys)
-        ws.write_formula(total_row, column, f"=SUM({excel_col}3:{excel_col}{total_row})", fmt_total, cached)
-    ws.write(total_row, 11, "—", fmt_unknown)
-    ws.write(total_row, 12, "—", fmt_unknown)
-    ws.merge_range(total_row + 2, 0, total_row + 3, 12,
-                   f"0 кунлик {zero_day_count} та ёзув 1-30 кунга қўшилмади; улар 'Свод' ва 'База'да сақланган. "
-                   "Охирги 2 тоифа учун CSVда алоҳида белги йўқ, шу сабаб улар ҳисобланмади (—).", fmt_note)
+        ws.write_formula(total_row, column, f"=SUM({excel_col}2:{excel_col}{total_row})", fmt_total, cached)
+    ws.write_formula(total_row, 10, f"=SUM(K2:K{total_row})", fmt_total,
+                     sum(detailed_counts[key][bucket] for key in detailed_keys for bucket in DISPLAY_BUCKETS))
+    ws.merge_range(total_row + 2, 0, total_row + 2, 10,
+                   f"{snapshot_date.strftime('%d.%m.%Y')} ҳолати. 0–30 кунлик ёзувлар бу жадвалга киритилмади; "
+                   "улар 'Свод' ва 'База'да сақланган.", fmt_note)
     ws.set_row(total_row + 2, 28)
-    ws.set_row(total_row + 3, 24)
     ws.set_column("A:A", 31)
-    ws.set_column("B:K", 15)
-    ws.set_column("L:M", 29)
-    ws.freeze_panes(2, 1)
-    ws.autofilter(1, 0, max(2, total_row - 1), 12)
+    ws.set_column("B:K", 13)
+    ws.freeze_panes(1, 1)
+    ws.autofilter(0, 0, max(1, total_row - 1), 10)
 
     comparison_mismatches = None
     if reference:
         ws = wb.add_worksheet("Солиштириш")
         ws.set_tab_color("#E69138")
-        ws.merge_range("A1:F2", "ЭТАЛОН ВА ДАСТУР НАТИЖАСИНИ СОЛИШТИРИШ", fmt_title)
+        compare_buckets = reference["buckets"]
+        last_bucket_col = len(compare_buckets)
+        total_col = last_bucket_col + 1
+        status_col = total_col + 1
+        last_bucket_letter = xlsxwriter.utility.xl_col_to_name(last_bucket_col)
+        ws.merge_range(0, 0, 1, status_col, "ЭТАЛОН ВА ДАСТУР НАТИЖАСИНИ СОЛИШТИРИШ", fmt_title)
         ws.write(2, 0, "Эталон", fmt_label)
-        ws.merge_range(2, 1, 2, 5, reference["title"] or "Юкланган Excel", fmt_cell)
+        ws.merge_range(2, 1, 2, status_col, reference["title"] or "Юкланган Excel", fmt_cell)
         ws.write(3, 0, "Дастур санаси", fmt_label)
         ws.write(3, 1, snapshot_date.strftime("%d.%m.%Y"), fmt_cell)
-        ws.write_row(5, 0, ["ХГТ бўлими", "Оралиқ", "Эталон", "Дастур", "Фарқ", "Ҳолат"], fmt_header)
-        comparison_mismatches = 0
-        compare_row = 6
         compare_keys = list(reference["districts"]) + [key for key in detailed_keys if key not in reference["districts"]]
-        for key in compare_keys:
-            known_reference = key in reference["districts"]
-            known_actual = key in detailed_names
-            name = reference["names"].get(key, detailed_names.get(key, key))
-            for bucket in BUCKETS:
-                expected = reference["districts"][key][bucket] if known_reference else None
-                actual = detailed_counts[key][bucket] if known_actual else None
-                if not known_reference:
-                    status = "Эталонда йўқ"
-                elif not known_actual:
-                    status = "CSVда йўқ"
-                else:
-                    status = "Мос" if actual == expected else "Фарқ бор"
-                if status != "Мос":
-                    comparison_mismatches += 1
-                ws.write(compare_row, 0, name, fmt_cell)
-                ws.write(compare_row, 1, bucket, fmt_center)
-                if expected is not None:
-                    ws.write_number(compare_row, 2, expected, fmt_int)
-                if actual is not None:
-                    ws.write_number(compare_row, 3, actual, fmt_int)
-                if expected is not None and actual is not None:
-                    ws.write_number(compare_row, 4, actual - expected, fmt_diff if actual != expected else fmt_int)
-                ws.write(compare_row, 5, status, fmt_ok if status == "Мос" else fmt_warn)
-                compare_row += 1
-        ws.write(4, 0, "Фарқли қаторлар", fmt_label)
+        comparison_mismatches = sum(
+            1 if key not in reference["districts"] or key not in detailed_names else
+            sum(detailed_counts[key][bucket] != reference["districts"][key][bucket]
+                for bucket in compare_buckets)
+            for key in compare_keys
+        )
+        ws.write(4, 0, "Фарқлар сони", fmt_label)
         ws.write_number(4, 1, comparison_mismatches, fmt_diff if comparison_mismatches else fmt_int)
         ws.write(4, 2, "Эталон жами", fmt_label)
         ws.write_number(4, 3, sum(reference["totals"].values()), fmt_int)
         ws.write(4, 4, "Дастур жами", fmt_label)
-        ws.write_number(4, 5, sum(sum(counts.values()) for counts in detailed_counts.values()), fmt_int)
+        ws.write_number(4, 5, sum(detailed_counts[key][bucket]
+                                  for key in detailed_keys for bucket in compare_buckets), fmt_int)
+
+        def section_value(section, key, bucket):
+            expected = reference["districts"][key][bucket] if key in reference["districts"] else 0
+            actual = detailed_counts[key][bucket] if key in detailed_names else 0
+            if section == "reference":
+                return expected
+            if section == "actual":
+                return actual
+            return actual - expected
+
+        section_rows = {}
+        section_start = 6
+        for section, title in (("reference", "ЭТАЛОН"), ("actual", "ДАСТУР"), ("difference", "ФАРҚ (ДАСТУР − ЭТАЛОН)")):
+            ws.merge_range(section_start, 0, section_start, status_col, title, fmt_label)
+            header_row = section_start + 1
+            data_start = section_start + 2
+            ws.write_row(header_row, 0, ["Райгаз", *compare_buckets, "Жами", "Ҳолат"], fmt_header)
+            ws.set_row(header_row, 26)
+            section_rows[section] = data_start
+            for offset, key in enumerate(compare_keys):
+                row_index = data_start + offset
+                name = reference["names"].get(key, detailed_names.get(key, key))
+                has_reference = key in reference["districts"]
+                has_actual = key in detailed_names
+                ws.write(row_index, 0, name, fmt_cell)
+                for col, bucket in enumerate(compare_buckets, start=1):
+                    expected = reference["districts"][key][bucket] if has_reference else 0
+                    actual = detailed_counts[key][bucket] if has_actual else 0
+                    if section == "reference":
+                        ws.write_number(row_index, col, expected, fmt_int if has_reference else fmt_unknown)
+                    elif section == "actual":
+                        ws.write_number(row_index, col, actual, fmt_int if has_actual else fmt_unknown)
+                    else:
+                        ref_row = section_rows["reference"] + offset + 1
+                        actual_row = section_rows["actual"] + offset + 1
+                        excel_col = xlsxwriter.utility.xl_col_to_name(col)
+                        delta = actual - expected
+                        ws.write_formula(row_index, col,
+                                         f"={excel_col}{actual_row}-{excel_col}{ref_row}",
+                                         fmt_diff if delta else fmt_int, delta)
+                row_number = row_index + 1
+                cached_total = sum(section_value(section, key, bucket) for bucket in compare_buckets)
+                ws.write_formula(row_index, total_col, f"=SUM(B{row_number}:{last_bucket_letter}{row_number})",
+                                 fmt_diff if section == "difference" and cached_total else fmt_int, cached_total)
+                if section == "difference":
+                    if not has_reference:
+                        status = "Эталонда йўқ"
+                    elif not has_actual:
+                        status = "CSVда йўқ"
+                    else:
+                        status = "Мос" if all(detailed_counts[key][bucket] == reference["districts"][key][bucket]
+                                               for bucket in compare_buckets) else "Фарқ бор"
+                    ws.write(row_index, status_col, status, fmt_ok if status == "Мос" else fmt_warn)
+            summary_row = data_start + len(compare_keys)
+            ws.write(summary_row, 0, "ЖАМИ", fmt_total)
+            for col in range(1, total_col + 1):
+                excel_col = xlsxwriter.utility.xl_col_to_name(col)
+                buckets_for_col = compare_buckets if col == total_col else (compare_buckets[col - 1],)
+                cached = sum(section_value(section, key, bucket)
+                             for key in compare_keys for bucket in buckets_for_col)
+                ws.write_formula(summary_row, col,
+                                 f"=SUM({excel_col}{data_start + 1}:{excel_col}{summary_row})", fmt_total,
+                                 cached)
+            section_start = summary_row + 3
         ws.set_column("A:A", 32)
-        ws.set_column("B:B", 16)
-        ws.set_column("C:E", 16)
-        ws.set_column("F:F", 20)
-        ws.freeze_panes(6, 2)
-        ws.autofilter(5, 0, max(6, compare_row - 1), 5)
-        ws.merge_range(compare_row + 1, 0, compare_row + 2, 5,
-                       "Солиштириш фақат 1-30 ... 71+ кун оралиқлари учун. "
-                       f"0 кунлик {zero_day_count} та ёзув эталондаги 1-30 кунга қўшилмади. "
-                       "Охирги 2 махсус тоифа CSVда алоҳида белгиланмагани учун солиштирилмади.", fmt_note)
-        ws.set_row(compare_row + 1, 26)
-        ws.set_row(compare_row + 2, 26)
+        ws.set_column(1, total_col, 13)
+        ws.set_column(status_col, status_col, 19)
+        ws.freeze_panes(8, 1)
+        ws.merge_range(section_start, 0, section_start, status_col,
+                       "Фарқ = дастур − эталон. Эталонда ёки CSVда йўқ район 0 билан кўрсатилган ва Ҳолатда белгиланган. "
+                       f"0 кунлик {zero_day_count} та ёзув 1-30 кунга қўшилмади.", fmt_note)
+        ws.set_row(section_start, 34)
 
     # Райгаз
     ws = wb.add_worksheet("Райгаз")

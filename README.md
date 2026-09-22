@@ -9,8 +9,8 @@ CSV fayllarni tekshiradigan va Excel svod hisobotini yaratadigan dastur. Windows
 - Realizatsiyalar orasidagi kun farqini hisoblaydi
 - Dublikat abonent kodlarini alohida varaqda ko‘rsatadi
 - Raygaz va mahalla kesimida Excel hisoboti yaratadi
-- “Давомилик” varag‘ida hududlar va 1–30, 31–35, ... 71+ kun oraliqlarini jadval ko‘rinishida beradi
-- Ixtiyoriy .xlsx etalon bilan hudud va oraliq bo‘yicha solishtirib, farqlarni “Солиштириш” varag‘iga yozadi
+- “Давомилик” varag‘ida rasmdagi kabi `Райгаз | 31-35 ... 71+ | Жами` jadvalini beradi
+- Ixtiyoriy .xlsx etalonning yangi (`Райгаз` sarlavhali) yoki eski (`ХГТ булими` sarlavhali) shaklini qabul qiladi; “Солиштириш” varag‘ida etalon, dastur va farq jadvallarini bir xil hudud va oraliqlar bilan ko‘rsatadi
 - Lokal rejimda ma’lumotlarni faqat kompyuterning o‘zida qayta ishlaydi
 
 ## Windows'da lokal ishga tushirish
@@ -25,7 +25,7 @@ Talablar birinchi ishga tushirishda avtomatik o‘rnatiladi:
 
 `NAMUNA.csv` fayli orqali dastur ishini sinab ko‘rish mumkin.
 
-Solishtirish uchun CSV fayllar bilan birga tayyor davomat `.xlsx` faylini ham tanlang. CSV sanasi va etalon sarlavhasidagi sanani tekshiring: turli kunlar yuklansa, varaq ularning farqini ko‘rsatadi. `1-30` oraliqiga 0 kunlik yozuvlar kiritilmaydi; ular “Свод” va “База”da qoladi. Etalondagi “umuman gaz olmaganlar” va “muddatida almashtirishga ehtiyoj yo‘q” ustunlari joriy CSV formatida alohida belgilanmagan, shuning uchun dastur ularni taxmin qilmaydi va `—` deb ko‘rsatadi.
+Solishtirish uchun CSV fayllar bilan birga tayyor davomat `.xlsx` faylini ham tanlang. CSV va etalonning sanalarini tekshiring: turli kunlar yuklansa, farq tabiiy ravishda paydo bo‘ladi. “Давомилик” jadvaliga 0–30 kunlik yozuvlar kiritilmaydi; ular “Свод” va “База”da qoladi. Eski etalonda `1-30` ustuni bo‘lsa, “Солиштириш”da u ham tekshiriladi (0 kunlik yozuvlarsiz). Etalondagi “umuman gaz olmaganlar” va “muddatida almashtirishga ehtiyoj yo‘q” kabi maxsus toifalar joriy CSV formatida alohida belgilanmagan, shuning uchun dastur ularni taxmin qilmaydi.
 
 Lokal rejimda yuklangan fayllar kompyuterdan tashqariga yuborilmaydi. Jami yuklash limiti 350 MB.
 

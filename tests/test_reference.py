@@ -7,7 +7,7 @@ from xml.etree import ElementTree as ET
 import xlsxwriter
 
 import app
-from reference import BUCKETS, parse_reference_xlsx
+from reference import BUCKETS, DISPLAY_BUCKETS, parse_reference_xlsx
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -28,6 +28,19 @@ def reference_fixture(first_bucket=0, extra_51=1):
     return output.getvalue()
 
 
+def screenshot_fixture(extra_51=1, wrong_total=False):
+    output = io.BytesIO()
+    workbook = xlsxwriter.Workbook(output)
+    sheet = workbook.add_worksheet("Sheet1")
+    sheet.write_row(0, 0, ["Райгаз", *DISPLAY_BUCKETS, "Жами"])
+    counts = [1 if bucket == "31-35" else extra_51 if bucket == "51-55" else 0
+              for bucket in DISPLAY_BUCKETS]
+    sheet.write_row(1, 0, ["ТЕСТ РАЙГАЗ", *counts, sum(counts) + int(wrong_total)])
+    sheet.write_row(2, 0, ["ЖАМИ", *counts, sum(counts)])
+    workbook.close()
+    return output.getvalue()
+
+
 def sheet_cell(workbook_bytes, sheet_number, address):
     ns = {"x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
     with zipfile.ZipFile(io.BytesIO(workbook_bytes)) as archive:
@@ -42,6 +55,17 @@ class ReferenceTests(unittest.TestCase):
         self.assertEqual(len(parsed["districts"]), 1)
         self.assertEqual(parsed["totals"]["31-35"], 1)
         self.assertEqual(parsed["totals"]["51-55"], 1)
+
+    def test_screenshot_layout_parses_without_1_30(self):
+        parsed = parse_reference_xlsx(screenshot_fixture(), app.header_key)
+        self.assertEqual(parsed["buckets"], DISPLAY_BUCKETS)
+        self.assertEqual(parsed["totals"]["31-35"], 1)
+        self.assertEqual(parsed["totals"]["51-55"], 1)
+        self.assertEqual(parsed["title"], "")
+
+    def test_screenshot_layout_checks_row_total(self):
+        with self.assertRaisesRegex(ValueError, "ustuni oraliqlar"):
+            parse_reference_xlsx(screenshot_fixture(wrong_total=True), app.header_key)
 
     def test_upload_comparison_identifies_one_changed_bucket(self):
         csv_data = (ROOT / "NAMUNA.csv").read_bytes()
@@ -58,14 +82,29 @@ class ReferenceTests(unittest.TestCase):
                     names = archive.read("xl/workbook.xml").decode("utf-8")
                 self.assertIn("Давомилик", names)
                 self.assertIn("Солиштириш", names)
-                self.assertEqual(sheet_cell(result.data, 2, "C3"), "1")
+                self.assertEqual(sheet_cell(result.data, 2, "B2"), "1")
+                self.assertEqual(sheet_cell(result.data, 2, "K2"), "2")
+
+    def test_screenshot_layout_upload_compares_as_matrix(self):
+        result = app.app.test_client().post(
+            "/generate",
+            data={"files": (io.BytesIO((ROOT / "NAMUNA.csv").read_bytes()), "NAMUNA.csv"),
+                  "reference": (io.BytesIO(screenshot_fixture(extra_51=2)), "current.xlsx")},
+        )
+        self.assertEqual(result.status_code, 200, result.get_data(as_text=True) if result.is_json else "")
+        self.assertEqual(result.headers["X-Mismatch-Count"], "1")
+        self.assertEqual(sheet_cell(result.data, 2, "B2"), "1")
+        self.assertEqual(sheet_cell(result.data, 3, "F21"), "-1")
+        self.assertEqual(sheet_cell(result.data, 3, "K10"), "3")
+        self.assertEqual(sheet_cell(result.data, 3, "K16"), "2")
+        self.assertEqual(sheet_cell(result.data, 3, "K22"), "-1")
 
     def test_day_zero_is_excluded_from_reference_bucket(self):
         csv_data = ("Вилоят;Райгаз;Маҳалла;Абонент код;Абонент;Еҳтиёж;Сўнги реализация;Бугунги реализация\n"
                     "НАМАНГАН;ТЕСТ РАЙГАЗ;ТЕСТ МФЙ;100001;ТЕСТ;1;2026-09-21;2026-09-21\n").encode()
         result = app.app.test_client().post("/generate", data={"files": (io.BytesIO(csv_data), "zero.csv")})
         self.assertEqual(result.status_code, 200)
-        self.assertEqual(sheet_cell(result.data, 2, "B3"), "0")
+        self.assertEqual(sheet_cell(result.data, 2, "B2"), "0")
         self.assertEqual(sheet_cell(result.data, 1, "B12"), "1")
 
 
