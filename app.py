@@ -26,21 +26,30 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 from flask import Flask, jsonify, render_template_string, request, send_file
+from werkzeug.exceptions import HTTPException
 import xlsxwriter
 
 APP_NAME = "SVOD TIZIMI"
 APP_VERSION = "1.0"
 PORT = 8765
 MAX_UPLOAD_MB = 350
+HOSTED_UPLOAD_MB = 4
+HOSTED = bool(os.environ.get("VERCEL") or os.environ.get("VERCEL_ENV"))
 
 BASE_DIR = Path(__file__).resolve().parent
 LOG_DIR = BASE_DIR / "logs"
-LOG_DIR.mkdir(exist_ok=True)
+log_handler = logging.StreamHandler(sys.stderr)
+if not HOSTED:
+    try:
+        LOG_DIR.mkdir(exist_ok=True)
+        log_handler = logging.FileHandler(LOG_DIR / "app.log", encoding="utf-8")
+    except OSError:
+        # Serverless deployments cannot write beside app.py. Keep startup working.
+        pass
 logging.basicConfig(
-    filename=LOG_DIR / "app.log",
+    handlers=[log_handler],
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s",
-    encoding="utf-8",
 )
 
 REQUIRED_HEADERS = [
@@ -67,7 +76,11 @@ EXCEL_MAX_ROWS = 1_048_576
 HEADER_FOLD = str.maketrans({"э": "е", "ё": "е", "ҳ": "х", "қ": "к", "ғ": "г", "ў": "у"})
 
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = (HOSTED_UPLOAD_MB if HOSTED else MAX_UPLOAD_MB) * 1024 * 1024
+
+
+def hosted_request() -> bool:
+    return HOSTED or request.host.split(":", 1)[0] not in ("127.0.0.1", "localhost")
 
 
 HTML = r"""
@@ -122,6 +135,7 @@ button{border:0;border-radius:10px;padding:13px 20px;font-size:16px;font-weight:
     <div id="drop" class="drop">
       <strong>CSV fayllarni shu yerga tashlang</strong>
       <div class="muted">yoki fayllarni tanlash uchun shu maydonni bosing</div>
+      <div class="muted">{{ upload_hint }}</div>
       <input id="fileInput" type="file" accept=".csv,text/csv" multiple>
     </div>
 
@@ -143,11 +157,15 @@ button{border:0;border-radius:10px;padding:13px 20px;font-size:16px;font-weight:
       Barcha hisoblar sanalarning haqiqiy farqidan olinadi, fayl nomiga ishonilmaydi.
     </div>
   </div>
-  <div class="footer">SVOD TIZIMI v1.0 — lokal ishlaydi, fayllar tashqi serverga yuborilmaydi.</div>
+  <div class="footer">SVOD TIZIMI v1.0 — {{ privacy_notice }}</div>
 </div>
 
 <script>
 let files = [];
+const hostedMode = {{ hosted | tojson }};
+const maxUploadBytes = {{ upload_limit_bytes }};
+const uploadLimitMb = {{ upload_limit_mb }};
+const largeFileHint = hostedMode ? 'Katta fayllarni lokal dasturda ishlating.' : 'Fayllarni kichraytiring.';
 const drop = document.getElementById('drop');
 const inp = document.getElementById('fileInput');
 const list = document.getElementById('filelist');
@@ -190,6 +208,11 @@ function escapeHtml(s){return s.replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','
 clearBtn.onclick=()=>{files=[];inp.value='';render();status.className='status';status.textContent='';kpis.style.display='none';};
 go.onclick=async()=>{
   if(!files.length)return;
+  if(files.reduce((sum,f)=>sum+f.size+1024,0)>maxUploadBytes){
+    status.className='status err';
+    status.textContent='Fayllar jami '+uploadLimitMb+' MB limitdan oshdi. '+largeFileHint;
+    return;
+  }
   go.disabled=true;
   status.className='status work';
   const t0=Date.now();
@@ -205,9 +228,10 @@ go.onclick=async()=>{
     try{
       res=await fetch('/generate',{method:'POST',body:fd});
     }catch(e){
-      throw new Error("Server bilan aloqa yo'q. ISHGA_TUSHIRISH.bat oynasi ochiq ekanini tekshiring va sahifani yangilang.");
+      throw new Error("Server bilan aloqa yo'q. Sahifani yangilang va qayta urinib ko'ring.");
     }
     if(!res.ok){
+      if(res.status===413) throw new Error('Fayl yoki tayyor Excel server limitidan oshdi. '+largeFileHint);
       const txt=await res.text();
       let msg=txt||('Xatolik: HTTP '+res.status);
       try{const j=JSON.parse(txt);msg=j.error||msg;}catch(e){}
@@ -744,15 +768,30 @@ def build_xlsx(all_rows: List[dict], file_stats: List[dict], warnings: List[str]
 
 @app.get("/")
 def index():
-    return render_template_string(HTML)
+    hosted = hosted_request()
+    limit_mb = HOSTED_UPLOAD_MB if hosted else MAX_UPLOAD_MB
+    return render_template_string(
+        HTML,
+        hosted=hosted,
+        upload_limit_mb=limit_mb,
+        upload_limit_bytes=limit_mb * 1024 * 1024,
+        upload_hint=(f"Vercel: jami CSV hajmi {limit_mb} MB gacha. Katta fayllar uchun lokal dasturni ishlating."
+                     if hosted else f"Lokal rejim: jami CSV hajmi {limit_mb} MB gacha."),
+        privacy_notice=("CSV fayllar Vercel serverida qayta ishlanadi; doimiy saqlanmaydi."
+                        if hosted else "lokal ishlaydi, fayllar tashqi serverga yuborilmaydi."),
+    )
 
 
 @app.post("/generate")
 def generate():
     try:
+        if hosted_request() and request.content_length and request.content_length > HOSTED_UPLOAD_MB * 1024 * 1024:
+            return jsonify({"error": f"Vercel limiti: jami CSV hajmi {HOSTED_UPLOAD_MB} MB dan oshmasin."}), 413
         files = request.files.getlist("files")
         all_rows, file_stats, warnings, manifest = parse_files(files)
         xlsx_bytes, summary = build_xlsx(all_rows, file_stats, warnings, manifest)
+        if hosted_request() and len(xlsx_bytes) > HOSTED_UPLOAD_MB * 1024 * 1024:
+            return jsonify({"error": "Excel fayl Vercel yuklab olish limitidan oshdi. Lokal dasturni ishlating."}), 413
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         out_name = f"SVOD_{summary['snapshot_date']}_{stamp}.xlsx"
         resp = send_file(
@@ -767,6 +806,8 @@ def generate():
         resp.headers["X-Mahalla-Count"] = str(summary["mahalla"])
         resp.headers["X-Duplicate-Count"] = str(summary["duplicates"])
         return resp
+    except HTTPException:
+        raise
     except Exception as exc:
         logging.exception("Generate error")
         return jsonify({"error": str(exc)}), 400
@@ -774,7 +815,8 @@ def generate():
 
 @app.errorhandler(413)
 def too_large(_):
-    return jsonify({"error": f"Yuklanayotgan fayllar juda katta. Limit: {MAX_UPLOAD_MB} MB."}), 413
+    limit_mb = HOSTED_UPLOAD_MB if hosted_request() else MAX_UPLOAD_MB
+    return jsonify({"error": f"Yuklanayotgan fayllar juda katta. Limit: {limit_mb} MB."}), 413
 
 
 def open_browser():
