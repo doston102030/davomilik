@@ -1,0 +1,73 @@
+SVOD TIZIMI v1.0
+================
+
+NIMA QILADI
+-----------
+CSV fayllarni bitta oynaga tashlaysiz. Tizim:
+1) ustunlarni tekshiradi;
+2) sanalarni tekshiradi;
+3) "Кун фарқи"ni hisoblaydi;
+4) oraliqlarga ajratadi;
+5) dublikatlarni o'chirmasdan nazorat qiladi;
+6) tayyor Excel fayl yaratadi.
+
+Excel varaqlari:
+- Свод
+- Райгаз
+- Маҳалла
+- Назорат
+- Дубликатлар
+- База
+
+MUHIM XAVFSIZLIK
+----------------
+- Manba CSV fayllar O'ZGARTIRILMAYDI.
+- Hech bir ma'lumot avtomatik o'chirilmaydi.
+- Dublikat bo'lsa alohida ko'rsatiladi.
+- Fayl nomiga qarab interval qo'yilmaydi; sanalar farqidan hisoblanadi.
+- Turli "Бугунги реализация" sanalari aralashsa, tizim svodni BLOKLAYDI.
+- Har bir manba fayl uchun SHA-256 nazorat kodi yoziladi.
+- Tizim localhost (127.0.0.1) da ishlaydi. CSV ma'lumotlar tashqi serverga yuborilmaydi.
+
+ISHGA TUSHIRISH
+---------------
+1. Papkani ZIP'dan to'liq chiqaring.
+2. ISHGA_TUSHIRISH.bat faylini ikki marta bosing.
+3. Brauzerda SVOD TIZIMI ochiladi.
+4. CSV fayllarni katta maydonga sudrab tashlang.
+5. "Tekshirish va Excel yaratish" tugmasini bosing.
+6. Tayyor .xlsx fayl avtomatik yuklanadi.
+
+TALAB
+-----
+- Windows 10/11
+- Python 3
+- Birinchi ishga tushirishda Flask va XlsxWriter modullari o'rnatilishi uchun internet kerak bo'lishi mumkin.
+- Keyingi ishlash lokal.
+
+QABUL QILINADIGAN ASOSIY USTUNLAR
+---------------------------------
+Вилоят
+Райгаз
+Маҳалла
+Абонент код
+Абонент
+Еҳтиёж
+Сўнги реализация
+Бугунги реализация
+
+Ustun nomidagi kichik imlo farqlari qabul qilinadi: katta-kichik harf,
+ortiqcha bo'sh joy, Э/Е, ҳ/х, қ/к, ғ/г, ў/у (masalan "Эҳтиёж" yoki "Махалла").
+Ajratuvchi: nuqtali vergul (;), vergul (,) yoki Tab.
+
+SANALAR
+-------
+YYYY-MM-DD
+DD.MM.YYYY
+DD/MM/YYYY
+DD-MM-YYYY
+Sanadan keyin vaqt bo'lsa (masalan "17.08.2026 0:00"), vaqt e'tiborga olinmaydi.
+
+LOG
+---
+logs\app.log faylida ishga tushirish va nazorat yozuvlari saqlanadi.
