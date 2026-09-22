@@ -3,7 +3,7 @@ SVOD TIZIMI v1.1
 
 NIMA QILADI
 -----------
-CSV fayllarni bitta oynaga tashlaysiz. Tizim:
+CSV fayllarni, CSVlar joylangan ZIP faylni yoki butun papkani oynaga tashlaysiz. Tizim:
 1) ustunlarni tekshiradi;
 2) sanalarni tekshiradi;
 3) "Кун фарқи"ni hisoblaydi;
@@ -16,6 +16,7 @@ Excel varaqlari:
 - Свод
 - Давомилик
 - Солиштириш (etalon tanlangan bo'lsa)
+- Фарқлар (etalon tanlangan bo'lsa)
 - Райгаз
 - Маҳалла
 - Назорат
@@ -37,8 +38,10 @@ ISHGA TUSHIRISH
 1. Papkani ZIP'dan to'liq chiqaring.
 2. ISHGA_TUSHIRISH.bat faylini ikki marta bosing.
 3. Brauzerda SVOD TIZIMI ochiladi.
-4. CSV fayllarni katta maydonga sudrab tashlang.
-5. Solishtirish kerak bo'lsa, pastdagi maydondan etalon .xlsx faylni tanlang.
+4. CSV fayllarni, ularni jamlagan ZIP faylni yoki butun papkani katta maydonga sudrab tashlang.
+   Papka sudrash ishlamasa, "Papkani tanlash" tugmasidan foydalaning.
+   Noto'g'ri tanlangan fayl yonidagi "Olib tashlash" tugmasi bilan o'chiriladi.
+5. Solishtirish kerak bo'lsa, etalon .xlsx faylni pastdagi blok ustiga tashlang yoki tugma orqali tanlang.
 6. "Tekshirish va Excel yaratish" tugmasini bosing.
 7. Tayyor .xlsx fayl avtomatik yuklanadi.
 
@@ -46,7 +49,8 @@ SOLISHTIRISH IZOHI
 -----------------
 - CSV va etalon sanalarini tekshiring; turli kunlar ham solishtiriladi.
 - Yangi etalon shakli: Райгаз | 31-35 ... 71+ | Жами. Eski ХГТ булими shakli ham qabul qilinadi.
-- Солиштириш varag'ida etalon, dastur va farq jadvallari bir xil hududlar bo'yicha ko'rsatiladi.
+- Солиштириш varag'ida etalon sonining yonida yangi jadvaldagi ayiriladigan son qizil ko'rsatiladi (masalan 5829 -1383).
+- Фарқлар varag'ida etalon, dastur va qoldiq (etalon minus dastur) sonli jadvallari alohida ko'rsatiladi.
 - 0-30 kunlik yozuvlar Давомилик jadvaliga kiritilmaydi, lekin База va Сводda qoladi.
 - Eski etalondagi 1-30 ustunini solishtirishda 0 kunlik yozuvlar qo'shilmaydi.
 - CSVda alohida belgilanmagan maxsus toifalar hisoblanmaydi.

@@ -98,9 +98,12 @@ def parse_reference_xlsx(data: bytes, normalize_name) -> dict:
     buckets = tuple(bucket for bucket in BUCKETS if bucket in columns)
     total_column = next((column for column, value in header.items()
                          if normalize_name(value) in ("жами", "итого", "total")), None)
+    special_columns = [(column, value) for column, value in sorted(header.items())
+                       if column > max(columns.values()) and column != total_column and value.strip()]
 
     districts = {}
     names = {}
+    special_values = {}
     total_row = None
     for number, row in sorted(rows.items()):
         if number <= header_row:
@@ -128,8 +131,15 @@ def parse_reference_xlsx(data: bytes, normalize_name) -> dict:
             raw_total = str(row.get(total_column, "")).replace(" ", "").strip()
             if not raw_total.isdigit() or int(raw_total) != sum(counts.values()):
                 raise ValueError(f"Solishtirish fayli {number}-qator: Жами ustuni oraliqlar yig'indisiga teng emas.")
+        extras = []
+        for column, label in special_columns:
+            raw = str(row.get(column, "")).replace(" ", "").strip()
+            if raw and (not raw.isdigit() or int(raw) < 0):
+                raise ValueError(f"Solishtirish fayli {number}-qator, {label}: butun son kerak.")
+            extras.append(int(raw) if raw else None)
         districts[key] = counts
         names[key] = name
+        special_values[key] = extras
     if not districts:
         raise ValueError("Solishtirish faylida hudud ma'lumotlari yo'q.")
 
@@ -143,7 +153,17 @@ def parse_reference_xlsx(data: bytes, normalize_name) -> dict:
             cached = str(total_row.get(total_column, "")).replace(" ", "").strip()
             if not cached.isdigit() or int(cached) != sum(totals.values()):
                 raise ValueError("Solishtirish faylida umumiy Жами hududlar yig'indisiga teng emas.")
+        for index, (column, label) in enumerate(special_columns):
+            cached = str(total_row.get(column, "")).replace(" ", "").strip()
+            expected = sum(values[index] or 0 for values in special_values.values())
+            if cached and (not cached.isdigit() or int(cached) != expected):
+                raise ValueError(f"Solishtirish faylida {label} jami hududlar yig'indisiga teng emas.")
 
     title = rows.get(1, {}).get(9, "").strip() if header_row > 1 else ""
     return {"title": title, "districts": districts, "names": names,
-            "totals": totals, "buckets": buckets}
+            "totals": totals, "buckets": buckets,
+            "first_header": header.get(1, "Райгаз"),
+            "bucket_headers": {bucket: header[columns[bucket]] for bucket in buckets},
+            "special_headers": [label for _, label in special_columns],
+            "special_values": special_values,
+            "has_total_column": total_column is not None}

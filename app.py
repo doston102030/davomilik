@@ -19,6 +19,7 @@ import tempfile
 import threading
 import urllib.request
 import webbrowser
+import zipfile
 from collections import Counter, defaultdict
 from datetime import datetime
 from functools import lru_cache
@@ -31,7 +32,7 @@ import xlsxwriter
 from reference import BUCKETS, DISPLAY_BUCKETS, parse_reference_xlsx
 
 APP_NAME = "SVOD TIZIMI"
-APP_VERSION = "1.1"
+APP_VERSION = "1.2"
 PORT = 8765
 MAX_UPLOAD_MB = 350
 HOSTED_UPLOAD_MB = 4
@@ -106,17 +107,23 @@ h1{margin:0 0 6px;font-size:30px}.sub{opacity:.9}
 .drop{border:2px dashed #87A6C8;border-radius:14px;padding:42px 20px;text-align:center;cursor:pointer;background:#FAFCFF;transition:.15s}
 .drop.drag{border-color:var(--green);background:#F0FAF1}
 .drop strong{font-size:20px;display:block;margin-bottom:8px}
+.drop-actions{display:flex;justify-content:center;gap:10px;margin-top:12px;flex-wrap:wrap}
 .muted{color:#60758A;font-size:14px}
 #fileInput{display:none}
 .reference{margin-top:18px;padding:14px 16px;border:1px solid var(--border);border-radius:10px;background:#FAFCFF}
+.reference.drag{border:2px dashed var(--green);background:#F0FAF1;padding:13px 15px}
 .reference label{font-weight:700;display:block;margin-bottom:6px}
-.reference input{max-width:100%;margin-top:10px}
+.reference input{max-width:100%}
+.reference-row{display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap}
+.selected-reference{font-weight:700;color:#1B5E20;overflow-wrap:anywhere}
 .filelist{margin-top:18px;max-height:250px;overflow:auto;border-top:1px solid var(--border)}
 .file{display:flex;justify-content:space-between;gap:12px;padding:10px 4px;border-bottom:1px solid #EDF1F6;font-size:14px}
+.file-name{min-width:0;overflow-wrap:anywhere}.file-tools{display:flex;align-items:center;gap:10px;white-space:nowrap}
 .actions{display:flex;gap:12px;align-items:center;margin-top:20px;flex-wrap:wrap}
 button{border:0;border-radius:10px;padding:13px 20px;font-size:16px;font-weight:700;cursor:pointer}
 .primary{background:var(--green);color:white}.primary:disabled{opacity:.45;cursor:not-allowed}
 .secondary{background:#E9EFF7;color:#24496F}
+.small{padding:7px 11px;font-size:13px}.remove{background:#FFF0EE;color:var(--danger)}
 .status{margin-top:18px;padding:14px 16px;border-radius:10px;display:none;white-space:pre-wrap}
 .status.ok{display:block;background:#EAF6EC;color:#1B5E20;border:1px solid #B9DDBE}
 .status.err{display:block;background:#FFF0EE;color:var(--danger);border:1px solid #F4C7C3}
@@ -132,21 +139,28 @@ button{border:0;border-radius:10px;padding:13px 20px;font-size:16px;font-weight:
 <body>
 <div class="top"><div class="top-inner">
   <h1>SVOD TIZIMI</h1>
-  <div class="sub">CSV fayllarni tekshirish va tayyor Excel svod yaratish</div>
+  <div class="sub">CSV, ZIP yoki papkani tekshirish va tayyor Excel svod yaratish</div>
 </div></div>
 <div class="wrap">
   <div class="card">
     <div id="drop" class="drop">
-      <strong>CSV fayllarni shu yerga tashlang</strong>
+      <strong>CSV, ZIP yoki papkani shu yerga tashlang</strong>
+      <div class="muted">Papka ichidagi barcha CSV va ZIP fayllar avtomatik olinadi</div>
       <div class="muted">yoki fayllarni tanlash uchun shu maydonni bosing</div>
       <div class="muted">{{ upload_hint }}</div>
-      <input id="fileInput" type="file" accept=".csv,text/csv" multiple>
+      <input id="fileInput" type="file" accept=".csv,.zip,text/csv,application/zip" multiple>
+      <input id="folderInput" type="file" webkitdirectory directory multiple hidden>
+      <div class="drop-actions"><button id="folderPick" class="secondary small" type="button">Papkani tanlash</button></div>
     </div>
 
-    <div class="reference">
+    <div id="referenceDrop" class="reference">
       <label for="referenceInput">Tayyor davomat jadvali bilan solishtirish (ixtiyoriy)</label>
-      <div class="muted">.xlsx faylni tanlang. “Райгаз | 31-35 ... 71+ | Жами” jadvali ham qabul qilinadi; hududlar va oraliqlar bo‘yicha solishtirish alohida varaqda chiqadi.</div>
-      <input id="referenceInput" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+      <div class="muted">.xlsx faylni tanlang yoki shu blok ustiga tashlang. Eski “ХГТ булими” va yangi “Райгаз | 31-35 ... 71+ | Жами” jadvallari qabul qilinadi. Solishtirishda etalon yonida yangi miqdor qizil ayirish sifatida chiqadi: 5829 -1383.</div>
+      <div class="reference-row">
+        <input id="referenceInput" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+        <button id="referenceClear" class="remove small" type="button" hidden>Etalonni olib tashlash</button>
+      </div>
+      <div id="referenceSelected" class="selected-reference" hidden></div>
     </div>
 
     <div id="filelist" class="filelist"></div>
@@ -167,18 +181,24 @@ button{border:0;border-radius:10px;padding:13px 20px;font-size:16px;font-weight:
       Barcha hisoblar sanalarning haqiqiy farqidan olinadi, fayl nomiga ishonilmaydi.
     </div>
   </div>
-  <div class="footer">SVOD TIZIMI v1.1 — {{ privacy_notice }}</div>
+  <div class="footer">SVOD TIZIMI v1.2 — {{ privacy_notice }}</div>
 </div>
 
 <script>
 let files = [];
+let referenceFile = null;
 const hostedMode = {{ hosted | tojson }};
 const maxUploadBytes = {{ upload_limit_bytes }};
 const uploadLimitMb = {{ upload_limit_mb }};
 const largeFileHint = hostedMode ? 'Katta fayllarni lokal dasturda ishlating.' : 'Fayllarni kichraytiring.';
 const drop = document.getElementById('drop');
 const inp = document.getElementById('fileInput');
+const folderInput = document.getElementById('folderInput');
+const folderPick = document.getElementById('folderPick');
+const referenceDrop = document.getElementById('referenceDrop');
 const referenceInput = document.getElementById('referenceInput');
+const referenceClear = document.getElementById('referenceClear');
+const referenceSelected = document.getElementById('referenceSelected');
 const list = document.getElementById('filelist');
 const go = document.getElementById('go');
 const clearBtn = document.getElementById('clear');
@@ -192,34 +212,114 @@ window.addEventListener('drop', e => e.preventDefault());
 drop.onclick = () => inp.click();
 drop.ondragover = e => { e.preventDefault(); drop.classList.add('drag'); };
 drop.ondragleave = () => drop.classList.remove('drag');
-drop.ondrop = e => {
+drop.ondrop = async e => {
   e.preventDefault(); drop.classList.remove('drag');
-  addFiles([...e.dataTransfer.files]);
+  try{
+    const droppedFiles=await collectDroppedFiles(e.dataTransfer);
+    const accepted=droppedFiles.filter(f=>/\.(csv|zip)$/i.test(f.name));
+    if(!accepted.length){
+      status.className='status err';
+      status.textContent='Tashlangan joyda CSV yoki ZIP fayl topilmadi.';
+      return;
+    }
+    addFiles(accepted);
+  }catch(e){
+    status.className='status err';
+    status.textContent='Papkani o‘qib bo‘lmadi. “Papkani tanlash” tugmasidan foydalaning.';
+  }
 };
 inp.onchange = () => { addFiles([...inp.files]); inp.value = ''; };
+folderPick.onclick=e=>{e.stopPropagation();folderInput.click();};
+folderInput.onchange=()=>{addFiles([...folderInput.files]);folderInput.value='';};
+
+function entryFile(entry){
+  return new Promise((resolve,reject)=>entry.file(resolve,reject));
+}
+function directoryBatch(reader){
+  return new Promise((resolve,reject)=>reader.readEntries(resolve,reject));
+}
+async function collectEntryFiles(entry,result){
+  if(entry.isFile){
+    const file=await entryFile(entry);
+    file._relativePath=entry.fullPath||file.name;
+    result.push(file);
+    return;
+  }
+  if(!entry.isDirectory)return;
+  const reader=entry.createReader();
+  while(true){
+    const entries=await directoryBatch(reader);
+    if(!entries.length)break;
+    for(const child of entries)await collectEntryFiles(child,result);
+  }
+}
+async function collectDroppedFiles(dataTransfer){
+  const entries=[...dataTransfer.items]
+    .map(item=>item.webkitGetAsEntry?item.webkitGetAsEntry():null).filter(Boolean);
+  if(!entries.length)return [...dataTransfer.files];
+  const result=[];
+  for(const entry of entries)await collectEntryFiles(entry,result);
+  return result;
+}
 
 function addFiles(newFiles){
+  let added=0;
   for(const f of newFiles){
-    if(!f.name.toLowerCase().endsWith('.csv')) continue;
-    const key = f.name + ':' + f.size + ':' + f.lastModified;
-    if(!files.some(x => x._key === key)){ f._key = key; files.push(f); }
+    const lower=f.name.toLowerCase();
+    if(!lower.endsWith('.csv') && !lower.endsWith('.zip')) continue;
+    const displayName=f.webkitRelativePath||f._relativePath||f.name;
+    const key = displayName + ':' + f.size + ':' + f.lastModified;
+    f._displayName=displayName;
+    if(!files.some(x => x._key === key)){ f._key = key; files.push(f); added++; }
   }
   render();
+  return added;
 }
 function render(){
   list.innerHTML = '';
   files.forEach((f,i)=>{
     const d=document.createElement('div'); d.className='file';
-    d.innerHTML=`<span>${i+1}. ${escapeHtml(f.name)}</span><span>${(f.size/1024).toFixed(1)} KB</span>`;
+    d.innerHTML=`<span class="file-name">${i+1}. ${escapeHtml(f._displayName||f.name)}</span>`+
+      `<span class="file-tools"><span>${(f.size/1024).toFixed(1)} KB</span>`+
+      `<button class="remove small" type="button" data-remove="${i}">Olib tashlash</button></span>`;
     list.appendChild(d);
+  });
+  list.querySelectorAll('[data-remove]').forEach(button=>{
+    button.onclick=()=>{files.splice(Number(button.dataset.remove),1);render();};
   });
   go.disabled = files.length===0;
 }
 function escapeHtml(s){return s.replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));}
-clearBtn.onclick=()=>{files=[];inp.value='';referenceInput.value='';render();status.className='status';status.textContent='';kpis.style.display='none';};
+function setReference(file){
+  if(file && (!file.name.toLowerCase().endsWith('.xlsx') || file.size>10*1024*1024)){
+    status.className='status err';
+    status.textContent='Solishtirish uchun 10 MB gacha .xlsx fayl tanlang yoki tashlang.';
+    return false;
+  }
+  referenceFile=file||null;
+  referenceClear.hidden=!referenceFile;
+  referenceSelected.hidden=!referenceFile;
+  referenceSelected.textContent=referenceFile?'Tanlandi: '+referenceFile.name:'';
+  return true;
+}
+referenceInput.onchange=()=>{setReference(referenceInput.files[0]||null);};
+referenceDrop.ondragover=e=>{e.preventDefault();e.stopPropagation();referenceDrop.classList.add('drag');};
+referenceDrop.ondragleave=e=>{if(!referenceDrop.contains(e.relatedTarget))referenceDrop.classList.remove('drag');};
+referenceDrop.ondrop=e=>{
+  e.preventDefault();e.stopPropagation();referenceDrop.classList.remove('drag');
+  const file=[...e.dataTransfer.files].find(f=>f.name.toLowerCase().endsWith('.xlsx'));
+  if(!file){
+    status.className='status err';
+    status.textContent='Bu maydonga solishtirish uchun .xlsx fayl tashlang.';
+    return;
+  }
+  referenceInput.value='';
+  setReference(file);
+};
+referenceClear.onclick=()=>{referenceInput.value='';setReference(null);};
+clearBtn.onclick=()=>{files=[];inp.value='';folderInput.value='';referenceInput.value='';setReference(null);render();status.className='status';status.textContent='';kpis.style.display='none';};
 go.onclick=async()=>{
   if(!files.length)return;
-  const referenceFile=referenceInput.files[0];
   if(referenceFile && (!referenceFile.name.toLowerCase().endsWith('.xlsx') || referenceFile.size>10*1024*1024)){
     status.className='status err';
     status.textContent='Solishtirish uchun 10 MB gacha .xlsx fayl tanlang.';
@@ -374,6 +474,54 @@ def sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+class MemoryUpload:
+    """FileStorage-compatible wrapper for one CSV member read from a ZIP."""
+
+    def __init__(self, filename: str, data: bytes):
+        self.filename = filename
+        self._data = data
+
+    def read(self) -> bytes:
+        return self._data
+
+
+def source_uploads(file_items, expanded_limit: int):
+    """Yield direct CSV files and CSV members from ZIP files without disk extraction."""
+    expanded_bytes = 0
+    for item in file_items:
+        upload_name = Path(item.filename or "noma'lum").name
+        lower_name = upload_name.lower()
+        if lower_name.endswith(".csv"):
+            yield item
+            continue
+        if not lower_name.endswith(".zip"):
+            raise ValueError(f"{upload_name}: faqat .csv yoki .zip fayl qabul qilinadi.")
+
+        try:
+            item.stream.seek(0)
+            with zipfile.ZipFile(item.stream) as archive:
+                members = [info for info in archive.infolist()
+                           if not info.is_dir() and info.filename.lower().endswith(".csv")]
+                if not members:
+                    raise ValueError(f"{upload_name}: ZIP ichida CSV fayl topilmadi.")
+                if len(members) > 5000:
+                    raise ValueError(f"{upload_name}: ZIP ichida 5000 tadan ko'p CSV bor.")
+                for info in members:
+                    if info.flag_bits & 0x1:
+                        raise ValueError(f"{upload_name}: parolli ZIP qabul qilinmaydi.")
+                    expanded_bytes += info.file_size
+                    if expanded_bytes > expanded_limit:
+                        limit_mb = expanded_limit // (1024 * 1024)
+                        raise ValueError(
+                            f"ZIP ichidagi CSV fayllar ochilganda {limit_mb} MB limitdan oshdi."
+                        )
+                    member_name = re.split(r"[\\/]", info.filename)[-1]
+                    safe_name = f"{Path(upload_name).stem}__{member_name}"
+                    yield MemoryUpload(safe_name, archive.read(info))
+        except (zipfile.BadZipFile, zipfile.LargeZipFile, OSError) as exc:
+            raise ValueError(f"{upload_name}: haqiqiy va buzilmagan ZIP fayl kerak.") from exc
+
+
 def parse_files(file_items) -> Tuple[List[dict], List[dict], List[str], List[dict]]:
     all_rows: List[dict] = []
     file_stats: List[dict] = []
@@ -381,10 +529,9 @@ def parse_files(file_items) -> Tuple[List[dict], List[dict], List[str], List[dic
     source_manifest: List[dict] = []
     today_values = set()
 
-    if not file_items:
-        raise ValueError("Kamida bitta CSV fayl tanlang.")
-
+    source_seen = False
     for item in file_items:
+        source_seen = True
         filename = Path(item.filename or "noma'lum.csv").name
         if not filename.lower().endswith(".csv"):
             raise ValueError(f"{filename}: faqat .csv fayl qabul qilinadi.")
@@ -493,6 +640,9 @@ def parse_files(file_items) -> Tuple[List[dict], List[dict], List[str], List[dic
         })
         source_manifest.append({"file": filename, "sha256": digest, "rows": local_count})
         logging.info("SOURCE | %s | rows=%s | sha256=%s", filename, local_count, digest)
+
+    if not source_seen:
+        raise ValueError("Kamida bitta CSV yoki CSV fayllari bor ZIP tanlang.")
 
     # A single reporting/snapshot date is required to prevent mixing two days.
     if len(today_values) != 1:
@@ -685,9 +835,125 @@ def build_xlsx(all_rows: List[dict], file_stats: List[dict], warnings: List[str]
 
     comparison_mismatches = None
     if reference:
+        compare_buckets = reference["buckets"]
+        compare_keys = list(reference["districts"]) + [key for key in detailed_keys if key not in reference["districts"]]
+        comparison_mismatches = sum(
+            1 if key not in reference["districts"] or key not in detailed_names else
+            sum(detailed_counts[key][bucket] != reference["districts"][key][bucket]
+                for bucket in compare_buckets)
+            for key in compare_keys
+        )
+
+        # Keep the source matrix intact. The red suffix is the current amount
+        # being subtracted, not the already-calculated remainder.
         ws = wb.add_worksheet("Солиштириш")
         ws.set_tab_color("#E69138")
-        compare_buckets = reference["buckets"]
+        shown_headers = ([reference["first_header"]]
+                         + [reference["bucket_headers"][bucket] for bucket in compare_buckets]
+                         + reference["special_headers"]
+                         + (["Жами"] if reference["has_total_column"] else []))
+        last_shown_col = len(shown_headers) - 1
+        title_start = max(1, last_shown_col - 3)
+        fmt_matrix_title = wb.add_format({"bold": True, "bg_color": "#A7DDE8", "border": 1,
+                                          "align": "center", "valign": "vcenter"})
+        fmt_matrix_red = wb.add_format({"font_color": "#E60000"})
+        matrix_formats = {}
+        for color, bg in (("plain", "#FFFFFF"), ("gray", "#A6A6A6"), ("yellow", "#FFFF00")):
+            matrix_formats[color] = {
+                "header": wb.add_format({"bold": True, "bg_color": bg, "border": 1,
+                                          "align": "center", "valign": "vcenter", "text_wrap": True}),
+                "number": wb.add_format({"bg_color": bg, "border": 1, "align": "center",
+                                          "valign": "vcenter", "num_format": "0"}),
+                "total": wb.add_format({"bold": True, "bg_color": bg, "border": 1,
+                                         "align": "center", "valign": "vcenter", "num_format": "0"}),
+            }
+
+        def matrix_color(bucket):
+            if bucket in ("31-35", "36-40"):
+                return "gray"
+            if bucket in ("66-70", "71+"):
+                return "yellow"
+            return "plain"
+
+        def write_matrix_count(row, col, baseline, subtracted, cell_format):
+            if subtracted:
+                ws.write_rich_string(row, col, str(baseline), fmt_matrix_red,
+                                     f" -{subtracted}", cell_format)
+            else:
+                ws.write_number(row, col, baseline, cell_format)
+
+        ws.merge_range(0, title_start, 0, last_shown_col,
+                       reference["title"] or f"{snapshot_date.strftime('%d.%m.%Y')} Давомилик",
+                       fmt_matrix_title)
+        ws.set_row(0, 22)
+        for col, label in enumerate(shown_headers):
+            color = matrix_color(compare_buckets[col - 1]) if 1 <= col <= len(compare_buckets) else "plain"
+            ws.write(1, col, label, matrix_formats[color]["header"])
+        ws.set_row(1, 96)
+
+        for offset, key in enumerate(compare_keys):
+            row_index = offset + 2
+            name = reference["names"].get(key, detailed_names.get(key, key))
+            ws.write_string(row_index, 0, name, matrix_formats["plain"]["number"])
+            for col, bucket in enumerate(compare_buckets, start=1):
+                expected = reference["districts"][key][bucket] if key in reference["districts"] else 0
+                actual = detailed_counts[key][bucket] if key in detailed_names else 0
+                write_matrix_count(row_index, col, expected, actual,
+                                   matrix_formats[matrix_color(bucket)]["number"])
+            next_col = len(compare_buckets) + 1
+            for extra in reference["special_values"].get(key, [None] * len(reference["special_headers"])):
+                if extra is None:
+                    ws.write_blank(row_index, next_col, None, matrix_formats["plain"]["number"])
+                else:
+                    ws.write_number(row_index, next_col, extra, matrix_formats["plain"]["number"])
+                next_col += 1
+            if reference["has_total_column"]:
+                expected = sum(reference["districts"][key][bucket] for bucket in compare_buckets) if key in reference["districts"] else 0
+                actual = sum(detailed_counts[key][bucket] for bucket in compare_buckets) if key in detailed_names else 0
+                write_matrix_count(row_index, next_col, expected, actual,
+                                   matrix_formats["plain"]["number"])
+
+        matrix_total_row = len(compare_keys) + 2
+        ws.write_string(matrix_total_row, 0, "Жами", matrix_formats["plain"]["total"])
+        for col, bucket in enumerate(compare_buckets, start=1):
+            expected = reference["totals"][bucket]
+            actual = sum(detailed_counts[key][bucket] for key in detailed_keys)
+            write_matrix_count(matrix_total_row, col, expected, actual,
+                               matrix_formats[matrix_color(bucket)]["total"])
+        next_col = len(compare_buckets) + 1
+        for index in range(len(reference["special_headers"])):
+            expected = sum((values[index] or 0) for values in reference["special_values"].values())
+            ws.write_number(matrix_total_row, next_col, expected, matrix_formats["plain"]["total"])
+            next_col += 1
+        if reference["has_total_column"]:
+            expected = sum(reference["totals"].values())
+            actual = sum(detailed_counts[key][bucket] for key in detailed_keys for bucket in compare_buckets)
+            write_matrix_count(matrix_total_row, next_col, expected, actual,
+                               matrix_formats["plain"]["total"])
+        ws.merge_range(matrix_total_row + 2, 0, matrix_total_row + 2, last_shown_col,
+                       "Қизил сон — янги жадвалдаги айириладиган миқдор: эталон − янги миқдор. "
+                       "Қизил ёзув бўлмаса, янги миқдор 0. "
+                       "CSVда белгиланмаган махсус тоифалар эталондаги қиймати билан кўрсатилди, солиштирилмади.",
+                       fmt_note)
+        missing_reference = [reference["names"].get(key, detailed_names.get(key, key))
+                             for key in compare_keys if key not in reference["districts"]]
+        missing_actual = [reference["names"].get(key, detailed_names.get(key, key))
+                          for key in compare_keys if key not in detailed_names]
+        if missing_reference or missing_actual:
+            ws.merge_range(matrix_total_row + 3, 0, matrix_total_row + 4, last_shown_col,
+                           "Эталонда йўқ: " + (", ".join(missing_reference) or "—") + ". "
+                           "CSVда йўқ: " + (", ".join(missing_actual) or "—") + ".", fmt_warn)
+        ws.set_column(0, 0, 31)
+        ws.set_column(1, len(compare_buckets), 11)
+        if last_shown_col > len(compare_buckets):
+            ws.set_column(len(compare_buckets) + 1, last_shown_col, 13)
+        ws.freeze_panes(2, 1)
+        ws.set_landscape()
+        ws.fit_to_pages(1, 1)
+        ws.print_area(0, 0, matrix_total_row, last_shown_col)
+
+        ws = wb.add_worksheet("Фарқлар")
+        ws.set_tab_color("#9C6ADE")
         last_bucket_col = len(compare_buckets)
         total_col = last_bucket_col + 1
         status_col = total_col + 1
@@ -697,13 +963,6 @@ def build_xlsx(all_rows: List[dict], file_stats: List[dict], warnings: List[str]
         ws.merge_range(2, 1, 2, status_col, reference["title"] or "Юкланган Excel", fmt_cell)
         ws.write(3, 0, "Дастур санаси", fmt_label)
         ws.write(3, 1, snapshot_date.strftime("%d.%m.%Y"), fmt_cell)
-        compare_keys = list(reference["districts"]) + [key for key in detailed_keys if key not in reference["districts"]]
-        comparison_mismatches = sum(
-            1 if key not in reference["districts"] or key not in detailed_names else
-            sum(detailed_counts[key][bucket] != reference["districts"][key][bucket]
-                for bucket in compare_buckets)
-            for key in compare_keys
-        )
         ws.write(4, 0, "Фарқлар сони", fmt_label)
         ws.write_number(4, 1, comparison_mismatches, fmt_diff if comparison_mismatches else fmt_int)
         ws.write(4, 2, "Эталон жами", fmt_label)
@@ -719,11 +978,11 @@ def build_xlsx(all_rows: List[dict], file_stats: List[dict], warnings: List[str]
                 return expected
             if section == "actual":
                 return actual
-            return actual - expected
+            return expected - actual
 
         section_rows = {}
         section_start = 6
-        for section, title in (("reference", "ЭТАЛОН"), ("actual", "ДАСТУР"), ("difference", "ФАРҚ (ДАСТУР − ЭТАЛОН)")):
+        for section, title in (("reference", "ЭТАЛОН"), ("actual", "ДАСТУР"), ("difference", "ҚОЛДИҚ (ЭТАЛОН − ЯНГИ НАТИЖА)")):
             ws.merge_range(section_start, 0, section_start, status_col, title, fmt_label)
             header_row = section_start + 1
             data_start = section_start + 2
@@ -747,9 +1006,9 @@ def build_xlsx(all_rows: List[dict], file_stats: List[dict], warnings: List[str]
                         ref_row = section_rows["reference"] + offset + 1
                         actual_row = section_rows["actual"] + offset + 1
                         excel_col = xlsxwriter.utility.xl_col_to_name(col)
-                        delta = actual - expected
+                        delta = expected - actual
                         ws.write_formula(row_index, col,
-                                         f"={excel_col}{actual_row}-{excel_col}{ref_row}",
+                                         f"={excel_col}{ref_row}-{excel_col}{actual_row}",
                                          fmt_diff if delta else fmt_int, delta)
                 row_number = row_index + 1
                 cached_total = sum(section_value(section, key, bucket) for bucket in compare_buckets)
@@ -780,7 +1039,7 @@ def build_xlsx(all_rows: List[dict], file_stats: List[dict], warnings: List[str]
         ws.set_column(status_col, status_col, 19)
         ws.freeze_panes(8, 1)
         ws.merge_range(section_start, 0, section_start, status_col,
-                       "Фарқ = дастур − эталон. Эталонда ёки CSVда йўқ район 0 билан кўрсатилган ва Ҳолатда белгиланган. "
+                       "Қолдиқ = эталон − янги натижа. Эталонда ёки CSVда йўқ район 0 билан кўрсатилган ва Ҳолатда белгиланган. "
                        f"0 кунлик {zero_day_count} та ёзув 1-30 кунга қўшилмади.", fmt_note)
         ws.set_row(section_start, 34)
 
@@ -961,7 +1220,8 @@ def generate():
         if hosted_request() and request.content_length and request.content_length > HOSTED_UPLOAD_MB * 1024 * 1024:
             return jsonify({"error": f"Vercel limiti: jami fayl hajmi {HOSTED_UPLOAD_MB} MB dan oshmasin."}), 413
         files = request.files.getlist("files")
-        all_rows, file_stats, warnings, manifest = parse_files(files)
+        expanded_limit = (HOSTED_UPLOAD_MB if hosted_request() else MAX_UPLOAD_MB) * 1024 * 1024
+        all_rows, file_stats, warnings, manifest = parse_files(source_uploads(files, expanded_limit))
         reference_file = request.files.get("reference")
         reference = None
         if reference_file and reference_file.filename:
