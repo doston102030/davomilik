@@ -43,6 +43,12 @@ def _bucket_header(value: str) -> str | None:
     return None
 
 
+def _supported_special_header(value: str) -> bool:
+    key = " ".join(value.lower().replace("ё", "е").split())
+    return (all(word in key for word in ("умуман", "газ", "олмаган"))
+            or all(word in key for word in ("муддатида", "алмаштириш")))
+
+
 def parse_reference_xlsx(data: bytes, normalize_name) -> dict:
     """Return summary counts; reference cells are data, never executable instructions."""
     if len(data) > 10 * 1024 * 1024:
@@ -98,8 +104,11 @@ def parse_reference_xlsx(data: bytes, normalize_name) -> dict:
     buckets = tuple(bucket for bucket in BUCKETS if bucket in columns)
     total_column = next((column for column, value in header.items()
                          if normalize_name(value) in ("жами", "итого", "total")), None)
+    # Only these two source categories are meaningful for the comparison matrix.
+    # Other template-only columns (40/45/50 кунга кечиккан, ГГлар сони, etc.)
+    # must not leak into the generated report.
     special_columns = [(column, value) for column, value in sorted(header.items())
-                       if column > max(columns.values()) and column != total_column and value.strip()]
+                       if column != total_column and _supported_special_header(value)]
 
     districts = {}
     names = {}

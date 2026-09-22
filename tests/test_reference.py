@@ -22,12 +22,20 @@ def reference_fixture(first_bucket=0, extra_51=1, count_31=1):
         sheet.write(1, col, "70 кундан ошган" if bucket == "71+" else f"{bucket} кун")
     sheet.write(1, 11, "умуман газ олмаганлар")
     sheet.write(1, 12, "Муддатида алмаштиришга эҳтиёжи мавжуд эмас")
+    sheet.write(1, 13, "40 кунга кечиккан")
+    sheet.write(1, 14, "45 кунга кечиккан")
+    sheet.write(1, 15, "50 кунга кечиккан")
+    sheet.write(1, 16, "ГГлар сони")
     sheet.write(2, 0, "ТЕСТ РАЙГАЗ")
     for col, bucket in enumerate(BUCKETS, 1):
         sheet.write_number(2, col, first_bucket if bucket == "1-30" else
                            (count_31 if bucket == "31-35" else extra_51 if bucket == "51-55" else 0))
     sheet.write_number(2, 11, 0)
     sheet.write_number(2, 12, 0)
+    sheet.write_number(2, 13, 100)
+    sheet.write_number(2, 14, 200)
+    sheet.write_number(2, 15, 300)
+    sheet.write_number(2, 16, 400)
     workbook.close()
     return output.getvalue()
 
@@ -93,8 +101,13 @@ class ReferenceTests(unittest.TestCase):
                 self.assertEqual(int(result.headers["X-Mismatch-Count"]), expected_differences)
                 with zipfile.ZipFile(io.BytesIO(result.data)) as archive:
                     names = archive.read("xl/workbook.xml").decode("utf-8")
+                    comparison = archive.read("xl/worksheets/sheet3.xml").decode("utf-8")
                 self.assertIn("Давомилик", names)
                 self.assertIn("Солиштириш", names)
+                self.assertNotIn("40 кунга кечиккан", comparison)
+                self.assertNotIn("45 кунга кечиккан", comparison)
+                self.assertNotIn("50 кунга кечиккан", comparison)
+                self.assertNotIn("ГГлар сони", comparison)
                 self.assertEqual(sheet_cell(result.data, 2, "B2"), "1")
                 self.assertEqual(sheet_cell(result.data, 2, "K2"), "2")
                 if changed_count == 2:
