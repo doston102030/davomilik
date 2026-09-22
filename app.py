@@ -28,9 +28,10 @@ from typing import Dict, List, Tuple
 from flask import Flask, jsonify, render_template_string, request, send_file
 from werkzeug.exceptions import HTTPException
 import xlsxwriter
+from reference import BUCKETS, parse_reference_xlsx
 
 APP_NAME = "SVOD TIZIMI"
-APP_VERSION = "1.0"
+APP_VERSION = "1.1"
 PORT = 8765
 MAX_UPLOAD_MB = 350
 HOSTED_UPLOAD_MB = 4
@@ -107,6 +108,9 @@ h1{margin:0 0 6px;font-size:30px}.sub{opacity:.9}
 .drop strong{font-size:20px;display:block;margin-bottom:8px}
 .muted{color:#60758A;font-size:14px}
 #fileInput{display:none}
+.reference{margin-top:18px;padding:14px 16px;border:1px solid var(--border);border-radius:10px;background:#FAFCFF}
+.reference label{font-weight:700;display:block;margin-bottom:6px}
+.reference input{max-width:100%;margin-top:10px}
 .filelist{margin-top:18px;max-height:250px;overflow:auto;border-top:1px solid var(--border)}
 .file{display:flex;justify-content:space-between;gap:12px;padding:10px 4px;border-bottom:1px solid #EDF1F6;font-size:14px}
 .actions{display:flex;gap:12px;align-items:center;margin-top:20px;flex-wrap:wrap}
@@ -139,6 +143,12 @@ button{border:0;border-radius:10px;padding:13px 20px;font-size:16px;font-weight:
       <input id="fileInput" type="file" accept=".csv,text/csv" multiple>
     </div>
 
+    <div class="reference">
+      <label for="referenceInput">Tayyor davomat jadvali bilan solishtirish (ixtiyoriy)</label>
+      <div class="muted">.xlsx faylni tanlang. Dastur hududlar va kun oraliqlari bo‘yicha farqlarni alohida varaqda ko‘rsatadi.</div>
+      <input id="referenceInput" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+    </div>
+
     <div id="filelist" class="filelist"></div>
 
     <div class="actions">
@@ -157,7 +167,7 @@ button{border:0;border-radius:10px;padding:13px 20px;font-size:16px;font-weight:
       Barcha hisoblar sanalarning haqiqiy farqidan olinadi, fayl nomiga ishonilmaydi.
     </div>
   </div>
-  <div class="footer">SVOD TIZIMI v1.0 — {{ privacy_notice }}</div>
+  <div class="footer">SVOD TIZIMI v1.1 — {{ privacy_notice }}</div>
 </div>
 
 <script>
@@ -168,6 +178,7 @@ const uploadLimitMb = {{ upload_limit_mb }};
 const largeFileHint = hostedMode ? 'Katta fayllarni lokal dasturda ishlating.' : 'Fayllarni kichraytiring.';
 const drop = document.getElementById('drop');
 const inp = document.getElementById('fileInput');
+const referenceInput = document.getElementById('referenceInput');
 const list = document.getElementById('filelist');
 const go = document.getElementById('go');
 const clearBtn = document.getElementById('clear');
@@ -205,10 +216,16 @@ function render(){
   go.disabled = files.length===0;
 }
 function escapeHtml(s){return s.replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));}
-clearBtn.onclick=()=>{files=[];inp.value='';render();status.className='status';status.textContent='';kpis.style.display='none';};
+clearBtn.onclick=()=>{files=[];inp.value='';referenceInput.value='';render();status.className='status';status.textContent='';kpis.style.display='none';};
 go.onclick=async()=>{
   if(!files.length)return;
-  if(files.reduce((sum,f)=>sum+f.size+1024,0)>maxUploadBytes){
+  const referenceFile=referenceInput.files[0];
+  if(referenceFile && (!referenceFile.name.toLowerCase().endsWith('.xlsx') || referenceFile.size>10*1024*1024)){
+    status.className='status err';
+    status.textContent='Solishtirish uchun 10 MB gacha .xlsx fayl tanlang.';
+    return;
+  }
+  if(files.reduce((sum,f)=>sum+f.size+1024,referenceFile?referenceFile.size+1024:0)>maxUploadBytes){
     status.className='status err';
     status.textContent='Fayllar jami '+uploadLimitMb+' MB limitdan oshdi. '+largeFileHint;
     return;
@@ -223,6 +240,7 @@ go.onclick=async()=>{
   kpis.style.display='none';
   const fd=new FormData();
   files.forEach(f=>fd.append('files',f,f.name));
+  if(referenceFile)fd.append('reference',referenceFile,referenceFile.name);
   try{
     let res;
     try{
@@ -248,8 +266,10 @@ go.onclick=async()=>{
     const ray=res.headers.get('X-Raygaz-Count')||'-';
     const mah=res.headers.get('X-Mahalla-Count')||'-';
     const dup=res.headers.get('X-Duplicate-Count')||'-';
+    const mismatch=res.headers.get('X-Mismatch-Count');
     status.className='status ok';
-    status.textContent='Tayyor. Excel fayl yaratildi va yuklandi.';
+    status.textContent='Tayyor. Excel fayl yaratildi va yuklandi.'+
+      (mismatch!==null?' Solishtirish varag‘ida '+mismatch+' ta qator farq qildi.':'');
     kpis.innerHTML=`
       <div class="kpi"><span>Jami yozuv</span><b>${total}</b></div>
       <div class="kpi"><span>Raygaz</span><b>${ray}</b></div>
@@ -486,7 +506,7 @@ def parse_files(file_items) -> Tuple[List[dict], List[dict], List[str], List[dic
 
 
 def build_xlsx(all_rows: List[dict], file_stats: List[dict], warnings: List[str],
-               source_manifest: List[dict]) -> Tuple[bytes, dict]:
+               source_manifest: List[dict], reference: dict | None = None) -> Tuple[bytes, dict]:
     total = len(all_rows)
     if total == 0:
         raise ValueError("Ma'lumot yo'q.")
@@ -509,6 +529,25 @@ def build_xlsx(all_rows: List[dict], file_stats: List[dict], warnings: List[str]
     for r in all_rows:
         raygaz_counts[r["Райгаз"]][r["Оралиқ"]] += 1
         mahalla_counts[(r["Райгаз"], r["Маҳалла"])][r["Оралиқ"]] += 1
+
+    # The supplied district summary starts at day 1; day 0 remains visible in
+    # the existing control group, but must not be silently counted as 1-30.
+    detailed_counts = defaultdict(Counter)
+    detailed_names = {}
+    zero_day_count = 0
+    for r in all_rows:
+        key = header_key(r["Райгаз"])
+        detailed_names.setdefault(key, r["Райгаз"])
+        days = r["Кун фарқи"]
+        if days == 0:
+            zero_day_count += 1
+            continue
+        bucket = "1-30" if days <= 30 else (r["Оралиқ"] if days <= 70 else "71+")
+        detailed_counts[key][bucket] += 1
+    detailed_keys = sorted(detailed_names, key=lambda key: (-sum(detailed_counts[key].values()), detailed_names[key]))
+    if reference:
+        detailed_keys = ([key for key in reference["districts"] if key in detailed_names]
+                         + [key for key in detailed_keys if key not in reference["districts"]])
 
     raygaz_sorted = sorted(raygaz_names, key=lambda x: (-sum(raygaz_counts[x].values()), x))
     mahalla_sorted = sorted(mahalla_keys, key=lambda x: (x[0], -sum(mahalla_counts[x].values()), x[1]))
@@ -550,6 +589,8 @@ def build_xlsx(all_rows: List[dict], file_stats: List[dict], warnings: List[str]
     fmt_hash = wb.add_format({"border": 1, "font_name": "Consolas", "font_size": 8})
     fmt_note = wb.add_format({"italic": True, "font_color": "#666666", "text_wrap": True})
     fmt_dup = wb.add_format({"border": 1, "bg_color": "#FCE8E6"})
+    fmt_unknown = wb.add_format({"border": 1, "bg_color": "#F2F4F7", "font_color": "#667085", "align": "center"})
+    fmt_diff = wb.add_format({"border": 1, "bg_color": "#FCE8E6", "font_color": "#B42318", "num_format": "+#,##0;-#,##0;0"})
 
     # Свод
     ws = wb.add_worksheet("Свод")
@@ -611,6 +652,99 @@ def build_xlsx(all_rows: List[dict], file_stats: List[dict], warnings: List[str]
     chart.set_y_axis({"major_gridlines": {"visible": False}, "num_format": "#,##0"})
     chart.set_size({"width": 720, "height": 360})
     ws.insert_chart("E4", chart)
+
+    # The district matrix follows the uploaded 22 September layout. The two
+    # special categories cannot be derived from the required CSV columns.
+    ws = wb.add_worksheet("Давомилик")
+    ws.set_tab_color("#00A6A6")
+    ws.merge_range("A1:M1", f"{snapshot_date.strftime('%d.%m.%Y')} ДАВОМИЛИК — ХГТ БЎЛИМЛАРИ", fmt_title)
+    ws.set_row(0, 32)
+    detailed_headers = ["ХГТ бўлими"] + ["1-30 кун"] + [f"{bucket} кун" for bucket in BUCKETS[1:-1]] + [
+        "70 кундан ошган", "Умуман газ олмаганлар", "Муддатида алмаштиришга эҳтиёжи мавжуд эмас"]
+    ws.write_row(1, 0, detailed_headers, fmt_header)
+    ws.set_row(1, 46)
+    for row_index, key in enumerate(detailed_keys, start=2):
+        name = reference["names"].get(key, detailed_names.get(key, key)) if reference else detailed_names[key]
+        ws.write(row_index, 0, name, fmt_cell)
+        for column, bucket in enumerate(BUCKETS, start=1):
+            ws.write_number(row_index, column, detailed_counts[key][bucket], fmt_int)
+        ws.write(row_index, 11, "—", fmt_unknown)
+        ws.write(row_index, 12, "—", fmt_unknown)
+    total_row = len(detailed_keys) + 2
+    ws.write(total_row, 0, "Жами", fmt_total)
+    for column, bucket in enumerate(BUCKETS, start=1):
+        excel_col = xlsxwriter.utility.xl_col_to_name(column)
+        cached = sum(detailed_counts[key][bucket] for key in detailed_keys)
+        ws.write_formula(total_row, column, f"=SUM({excel_col}3:{excel_col}{total_row})", fmt_total, cached)
+    ws.write(total_row, 11, "—", fmt_unknown)
+    ws.write(total_row, 12, "—", fmt_unknown)
+    ws.merge_range(total_row + 2, 0, total_row + 3, 12,
+                   f"0 кунлик {zero_day_count} та ёзув 1-30 кунга қўшилмади; улар 'Свод' ва 'База'да сақланган. "
+                   "Охирги 2 тоифа учун CSVда алоҳида белги йўқ, шу сабаб улар ҳисобланмади (—).", fmt_note)
+    ws.set_row(total_row + 2, 28)
+    ws.set_row(total_row + 3, 24)
+    ws.set_column("A:A", 31)
+    ws.set_column("B:K", 15)
+    ws.set_column("L:M", 29)
+    ws.freeze_panes(2, 1)
+    ws.autofilter(1, 0, max(2, total_row - 1), 12)
+
+    comparison_mismatches = None
+    if reference:
+        ws = wb.add_worksheet("Солиштириш")
+        ws.set_tab_color("#E69138")
+        ws.merge_range("A1:F2", "ЭТАЛОН ВА ДАСТУР НАТИЖАСИНИ СОЛИШТИРИШ", fmt_title)
+        ws.write(2, 0, "Эталон", fmt_label)
+        ws.merge_range(2, 1, 2, 5, reference["title"] or "Юкланган Excel", fmt_cell)
+        ws.write(3, 0, "Дастур санаси", fmt_label)
+        ws.write(3, 1, snapshot_date.strftime("%d.%m.%Y"), fmt_cell)
+        ws.write_row(5, 0, ["ХГТ бўлими", "Оралиқ", "Эталон", "Дастур", "Фарқ", "Ҳолат"], fmt_header)
+        comparison_mismatches = 0
+        compare_row = 6
+        compare_keys = list(reference["districts"]) + [key for key in detailed_keys if key not in reference["districts"]]
+        for key in compare_keys:
+            known_reference = key in reference["districts"]
+            known_actual = key in detailed_names
+            name = reference["names"].get(key, detailed_names.get(key, key))
+            for bucket in BUCKETS:
+                expected = reference["districts"][key][bucket] if known_reference else None
+                actual = detailed_counts[key][bucket] if known_actual else None
+                if not known_reference:
+                    status = "Эталонда йўқ"
+                elif not known_actual:
+                    status = "CSVда йўқ"
+                else:
+                    status = "Мос" if actual == expected else "Фарқ бор"
+                if status != "Мос":
+                    comparison_mismatches += 1
+                ws.write(compare_row, 0, name, fmt_cell)
+                ws.write(compare_row, 1, bucket, fmt_center)
+                if expected is not None:
+                    ws.write_number(compare_row, 2, expected, fmt_int)
+                if actual is not None:
+                    ws.write_number(compare_row, 3, actual, fmt_int)
+                if expected is not None and actual is not None:
+                    ws.write_number(compare_row, 4, actual - expected, fmt_diff if actual != expected else fmt_int)
+                ws.write(compare_row, 5, status, fmt_ok if status == "Мос" else fmt_warn)
+                compare_row += 1
+        ws.write(4, 0, "Фарқли қаторлар", fmt_label)
+        ws.write_number(4, 1, comparison_mismatches, fmt_diff if comparison_mismatches else fmt_int)
+        ws.write(4, 2, "Эталон жами", fmt_label)
+        ws.write_number(4, 3, sum(reference["totals"].values()), fmt_int)
+        ws.write(4, 4, "Дастур жами", fmt_label)
+        ws.write_number(4, 5, sum(sum(counts.values()) for counts in detailed_counts.values()), fmt_int)
+        ws.set_column("A:A", 32)
+        ws.set_column("B:B", 16)
+        ws.set_column("C:E", 16)
+        ws.set_column("F:F", 20)
+        ws.freeze_panes(6, 2)
+        ws.autofilter(5, 0, max(6, compare_row - 1), 5)
+        ws.merge_range(compare_row + 1, 0, compare_row + 2, 5,
+                       "Солиштириш фақат 1-30 ... 71+ кун оралиқлари учун. "
+                       f"0 кунлик {zero_day_count} та ёзув эталондаги 1-30 кунга қўшилмади. "
+                       "Охирги 2 махсус тоифа CSVда алоҳида белгиланмагани учун солиштирилмади.", fmt_note)
+        ws.set_row(compare_row + 1, 26)
+        ws.set_row(compare_row + 2, 26)
 
     # Райгаз
     ws = wb.add_worksheet("Райгаз")
@@ -760,6 +894,7 @@ def build_xlsx(all_rows: List[dict], file_stats: List[dict], warnings: List[str]
         "duplicates": duplicate_extra,
         "snapshot_date": snapshot_date.isoformat(),
         "files": len(file_stats),
+        "comparison_mismatches": comparison_mismatches,
     }
     logging.info("OUTPUT | total=%s | raygaz=%s | mahalla=%s | duplicates=%s",
                  total, len(raygaz_names), len(mahalla_keys), duplicate_extra)
@@ -775,9 +910,9 @@ def index():
         hosted=hosted,
         upload_limit_mb=limit_mb,
         upload_limit_bytes=limit_mb * 1024 * 1024,
-        upload_hint=(f"Vercel: jami CSV hajmi {limit_mb} MB gacha. Katta fayllar uchun lokal dasturni ishlating."
-                     if hosted else f"Lokal rejim: jami CSV hajmi {limit_mb} MB gacha."),
-        privacy_notice=("CSV fayllar Vercel serverida qayta ishlanadi; doimiy saqlanmaydi."
+        upload_hint=(f"Vercel: jami fayl hajmi {limit_mb} MB gacha. Katta fayllar uchun lokal dasturni ishlating."
+                     if hosted else f"Lokal rejim: jami fayl hajmi {limit_mb} MB gacha."),
+        privacy_notice=("Fayllar Vercel serverida qayta ishlanadi; doimiy saqlanmaydi."
                         if hosted else "lokal ishlaydi, fayllar tashqi serverga yuborilmaydi."),
     )
 
@@ -786,10 +921,17 @@ def index():
 def generate():
     try:
         if hosted_request() and request.content_length and request.content_length > HOSTED_UPLOAD_MB * 1024 * 1024:
-            return jsonify({"error": f"Vercel limiti: jami CSV hajmi {HOSTED_UPLOAD_MB} MB dan oshmasin."}), 413
+            return jsonify({"error": f"Vercel limiti: jami fayl hajmi {HOSTED_UPLOAD_MB} MB dan oshmasin."}), 413
         files = request.files.getlist("files")
         all_rows, file_stats, warnings, manifest = parse_files(files)
-        xlsx_bytes, summary = build_xlsx(all_rows, file_stats, warnings, manifest)
+        reference_file = request.files.get("reference")
+        reference = None
+        if reference_file and reference_file.filename:
+            reference_name = Path(reference_file.filename).name
+            if not reference_name.lower().endswith(".xlsx"):
+                raise ValueError("Solishtirish uchun .xlsx fayl kerak.")
+            reference = parse_reference_xlsx(reference_file.read(), header_key)
+        xlsx_bytes, summary = build_xlsx(all_rows, file_stats, warnings, manifest, reference)
         if hosted_request() and len(xlsx_bytes) > HOSTED_UPLOAD_MB * 1024 * 1024:
             return jsonify({"error": "Excel fayl Vercel yuklab olish limitidan oshdi. Lokal dasturni ishlating."}), 413
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -805,6 +947,8 @@ def generate():
         resp.headers["X-Raygaz-Count"] = str(summary["raygaz"])
         resp.headers["X-Mahalla-Count"] = str(summary["mahalla"])
         resp.headers["X-Duplicate-Count"] = str(summary["duplicates"])
+        if summary["comparison_mismatches"] is not None:
+            resp.headers["X-Mismatch-Count"] = str(summary["comparison_mismatches"])
         return resp
     except HTTPException:
         raise

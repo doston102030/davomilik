@@ -1,4 +1,4 @@
-SVOD TIZIMI v1.0
+SVOD TIZIMI v1.1
 ================
 
 NIMA QILADI
@@ -10,9 +10,12 @@ CSV fayllarni bitta oynaga tashlaysiz. Tizim:
 4) oraliqlarga ajratadi;
 5) dublikatlarni o'chirmasdan nazorat qiladi;
 6) tayyor Excel fayl yaratadi.
+Ixtiyoriy etalon .xlsx fayl tanlansa, hudud va kun oraliqlari bo'yicha farqlarni ham ko'rsatadi.
 
 Excel varaqlari:
 - Свод
+- Давомилик
+- Солиштириш (etalon tanlangan bo'lsa)
 - Райгаз
 - Маҳалла
 - Назорат
@@ -35,8 +38,15 @@ ISHGA TUSHIRISH
 2. ISHGA_TUSHIRISH.bat faylini ikki marta bosing.
 3. Brauzerda SVOD TIZIMI ochiladi.
 4. CSV fayllarni katta maydonga sudrab tashlang.
-5. "Tekshirish va Excel yaratish" tugmasini bosing.
-6. Tayyor .xlsx fayl avtomatik yuklanadi.
+5. Solishtirish kerak bo'lsa, pastdagi maydondan etalon .xlsx faylni tanlang.
+6. "Tekshirish va Excel yaratish" tugmasini bosing.
+7. Tayyor .xlsx fayl avtomatik yuklanadi.
+
+SOLISHTIRISH IZOHI
+-----------------
+- CSV va etalon sarlavhasidagi sanalarni tekshiring; turli kunlar ham solishtiriladi.
+- 0 kunlik yozuvlar etalondagi 1-30 kun ustuniga qo'shilmaydi, lekin База va Сводda qoladi.
+- Oxirgi 2 maxsus toifa joriy CSVda alohida belgilanmagan; Давомиликda ular "—" bilan ko'rsatiladi.
 
 TALAB
 -----
