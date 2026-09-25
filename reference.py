@@ -24,7 +24,10 @@ def _column_number(address: str) -> int:
 def _text(cell: ET.Element, strings: list[str]) -> str:
     value = cell.find("x:v", NS)
     if cell.get("t") == "s" and value is not None:
-        return strings[int(value.text or "0")]
+        try:
+            return strings[int(value.text or "0")]
+        except (ValueError, IndexError) as exc:
+            raise ValueError("Solishtirish Excel faylining matnlar jadvali buzilgan.") from exc
     if cell.get("t") == "inlineStr":
         inline = cell.find("x:is", NS)
         return "".join(inline.itertext()) if inline is not None else ""
@@ -62,32 +65,49 @@ def parse_reference_xlsx(data: bytes, normalize_name) -> dict:
             )
             if not sheet_names:
                 raise ValueError("Excel faylida varaq topilmadi.")
-            if archive.getinfo(sheet_names[0]).file_size > 20 * 1024 * 1024:
-                raise ValueError("Excel varag'i juda katta.")
             strings = []
             if "xl/sharedStrings.xml" in archive.namelist():
                 if archive.getinfo("xl/sharedStrings.xml").file_size > 10 * 1024 * 1024:
                     raise ValueError("Excel matnlari juda katta.")
                 shared = ET.fromstring(archive.read("xl/sharedStrings.xml"))
                 strings = ["".join(item.itertext()) for item in shared.findall("x:si", NS)]
-            root = ET.fromstring(archive.read(sheet_names[0]))
+            roots = []
+            for sheet_name in sheet_names:
+                if archive.getinfo(sheet_name).file_size > 20 * 1024 * 1024:
+                    raise ValueError("Excel varag'i juda katta.")
+                roots.append(ET.fromstring(archive.read(sheet_name)))
     except (zipfile.BadZipFile, KeyError, ET.ParseError, IndexError) as exc:
         raise ValueError("Solishtirish uchun haqiqiy .xlsx fayl kerak.") from exc
 
-    rows = {}
-    for row in root.findall("x:sheetData/x:row", NS):
-        values = {}
-        for cell in row.findall("x:c", NS):
-            address = cell.get("r", "")
-            if re.match(r"^[A-Z]+\d+$", address):
-                values[_column_number(address)] = _text(cell, strings)
-        rows[int(row.get("r"))] = values
-
-    header_row = next((number for number, row in sorted(rows.items())
-                       if normalize_name(row.get(1, "")) == "райгаз"
-                       or ("хгт" in normalize_name(row.get(1, ""))
-                           and any(word in normalize_name(row.get(1, ""))
-                                   for word in ("булими", "бўлими")))), None)
+    selected = None
+    first_candidate = None
+    for root in roots:
+        rows = {}
+        for row in root.findall("x:sheetData/x:row", NS):
+            values = {}
+            for cell in row.findall("x:c", NS):
+                address = cell.get("r", "")
+                if re.match(r"^[A-Z]+\d+$", address):
+                    values[_column_number(address)] = _text(cell, strings)
+            rows[int(row.get("r"))] = values
+        header_row = next((number for number, row in sorted(rows.items())
+                           if normalize_name(row.get(1, "")) == "райгаз"
+                           or ("хгт" in normalize_name(row.get(1, ""))
+                               and any(word in normalize_name(row.get(1, ""))
+                                       for word in ("булими", "бўлими")))), None)
+        if header_row is not None:
+            first_candidate = first_candidate or (rows, header_row)
+            candidate_buckets = {
+                bucket for bucket in (_bucket_header(value) for value in rows[header_row].values())
+                if bucket
+            }
+            if all(bucket in candidate_buckets for bucket in DISPLAY_BUCKETS):
+                selected = rows, header_row
+                break
+    if selected is None:
+        rows, header_row = first_candidate or ({}, None)
+    else:
+        rows, header_row = selected
     if header_row is None:
         raise ValueError("Solishtirish faylida 'Райгаз' yoki 'ХГТ булими' sarlavhasi topilmadi.")
     header = rows[header_row]
@@ -156,7 +176,9 @@ def parse_reference_xlsx(data: bytes, normalize_name) -> dict:
     if total_row:
         for bucket, column in columns.items():
             cached = str(total_row.get(column, "")).strip()
-            if cached and cached.isdigit() and int(cached) != totals[bucket]:
+            if not cached or not cached.isdigit():
+                raise ValueError(f"Solishtirish faylida {bucket} umumiy jami son bilan to‘ldirilishi kerak.")
+            if int(cached) != totals[bucket]:
                 raise ValueError(f"Solishtirish faylida {bucket} jami hududlar yig'indisiga teng emas.")
         if total_column is not None:
             cached = str(total_row.get(total_column, "")).replace(" ", "").strip()

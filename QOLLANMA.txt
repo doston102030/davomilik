@@ -1,4 +1,4 @@
-SVOD TIZIMI v1.1
+SVOD TIZIMI v1.3
 ================
 
 NIMA QILADI
@@ -11,6 +11,52 @@ CSV fayllarni, CSVlar joylangan ZIP faylni yoki butun papkani oynaga tashlaysiz.
 5) dublikatlarni o'chirmasdan nazorat qiladi;
 6) tayyor Excel fayl yaratadi.
 Ixtiyoriy etalon .xlsx fayl tanlansa, hudud va kun oraliqlari bo'yicha farqlarni ham ko'rsatadi.
+
+QABUL VA SOTUV XLSX HISOBOTI
+----------------------------
+"Учреждение / Инспектор / Принял / Реализовал / Вернул" ustunlari bor XLSX faylni
+asosiy maydonga tashlang. Tizim formatni avtomatik taniydi va quyidagi varaqlarni yaratadi:
+- Свод
+- Райгаз
+- Чилангарлар
+- Назорат
+Manbadagi oraliq yoki takroriy "ЖАМИ" qatoridagi miqdor yo'qotilmaydi; u taqsimlanmagan
+qator sifatida saqlanadi va yakunlar manba fayldagi umumiy sonlar bilan tekshiriladi.
+
+SOTILGAN GAZLAR SAHIFASI
+------------------------
+Yuqoridagi "SOTILGAN GAZLAR" tugmasi alohida sahifani ochadi:
+1) chap tomonga kechagi holatning CSV, XLSX, ZIP yoki papkasini tanlang;
+2) o'ng tomonga yangi holatning CSV, XLSX, ZIP yoki papkasini tanlang;
+3) "Sotuvlarni hisoblash" tugmasini bosing.
+
+Tizim abonent kodi bo'yicha "So'nggi realizatsiya" sanasini solishtiradi.
+Sana yangilangan abonent sotilgan deb hisoblanadi. Natijada Raygaz bo'yicha jami,
+abonent kodi, abonent, mahalla, ehtiyoj va eski/yangi realizatsiya sanasi ko'rsatiladi.
+Natijani CSV fayl qilib yuklab olish mumkin.
+
+Agar ikkala tomonga ham "Учреждение / Инспектор / Принял / Реализовал / Вернул"
+formatidagi XLSX hisobot yuklansa, tizim raygaz va chilangar bo'yicha eski/yangi qabul,
+sotuv va qaytarilgan miqdorlarni hamda ularning farqini ko'rsatadi. Ikki tomondagi
+fayl turi bir xil bo'lishi kerak.
+Natija chiqqach, "Rasmdagidek Excel yuklash" tugmasi orqali original ko'rinishga yaqin
+jadval olinadi. SOTILMAGAN GAZ har bir qatorda "Принял - Реализовал" orqali
+hisoblanadi; manbadagi "Вернул" 0 yoki noto'liq bo'lsa ham qoldiq yo'qolmaydi.
+Kechagi chilangar satrlari va har bir raygazning sariq "ЖАМИ" qatori bitta
+jadvalda saqlanadi. G ustunida "yangi sotilmagan gaz - kechagi sotilmagan gaz"
+farqi yoziladi (masalan: kecha 1400, yangi holatda 1000 bo'lsa,
+1000 - 1400 = -400); o'zgarmagan raygazda 0 chiqadi. Pastdagi umumiy "Жами"
+qatorida ham kechagi C-F jamilar va umumiy farq ko'rsatiladi. Ko'k sarlavhada
+kechagi hisobot davri saqlanadi; yangi fayl "0000000.xlsx" deb nomlangan bo'lsa
+ham bu nom yozilmaydi. Gaz XLSX solishtirishida takroriy Raygaz va "Nazorat"
+jadvallari ko'rsatilmaydi.
+
+Yangi holatda topilmagan kod avtomatik sotuv deb olinmaydi. Yangi qo'shilgan kodlar,
+yo'qolgan kodlar va realizatsiya sanasidagi noaniq o'zgarishlar "Nazorat" jadvalida chiqadi.
+Dastur bir xil kodning Raygaz, mahalla, abonent yoki ehtiyoj qiymati o'zgarganini ham
+"Nazorat" jadvalida alohida ko'rsatadi.
+Dublikat abonent kodi bo'lsa, noto'g'ri hisobning oldini olish uchun solishtirish bloklanadi.
+Eski .xls fayl qabul qilinmaydi; uni Excel orqali .xlsx formatida qayta saqlang.
 
 Excel varaqlari:
 - Свод
@@ -30,7 +76,9 @@ MUHIM XAVFSIZLIK
 - Dublikat bo'lsa alohida ko'rsatiladi.
 - Fayl nomiga qarab interval qo'yilmaydi; sanalar farqidan hisoblanadi.
 - Turli "Бугунги реализация" sanalari aralashsa, tizim svodni BLOKLAYDI.
+- Ustunlar soni buzilgan CSV qatori va aynan bir xil faylning takror yuklanishi BLOKLANADI.
 - Har bir manba fayl uchun SHA-256 nazorat kodi yoziladi.
+- Brauzer javoblari no-store rejimida beriladi: operatsion ma'lumot keshda saqlanmaydi.
 - Tizim localhost (127.0.0.1) da ishlaydi. CSV ma'lumotlar tashqi serverga yuborilmaydi.
 
 ISHGA TUSHIRISH
@@ -44,6 +92,9 @@ ISHGA TUSHIRISH
 5. Solishtirish kerak bo'lsa, etalon .xlsx faylni pastdagi blok ustiga tashlang yoki tugma orqali tanlang.
 6. "Tekshirish va Excel yaratish" tugmasini bosing.
 7. Tayyor .xlsx fayl avtomatik yuklanadi.
+
+Fayl tanlanganda sahifaning yuqorisida tasdiq xabari va qisqa ovoz chiqadi.
+Excel tayyor bo'lganda boshqa yakuniy ovoz va "Muvaffaqiyatli" xabari ko'rsatiladi.
 
 SOLISHTIRISH IZOHI
 -----------------
